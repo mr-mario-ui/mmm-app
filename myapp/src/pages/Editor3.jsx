@@ -57,9 +57,8 @@ function getOrderedNodes(all) {
   return result
 }
 
-// ── Radiales Auto-Layout (MindNode-Stil) ─────────────────────
-// Root Mitte, Hauptäste links/rechts, Unterknoten als Textzeilen
-// mit vertikaler Sammellinie wie im Referenzbild
+// ── Radiales Auto-Layout ──────────────────────────────────────
+// Root in der Mitte, Hauptäste links/rechts aufgeteilt, Unterknoten als Zeilen
 function radialLayout(nodes, cx, cy) {
   if (nodes.length === 0) return nodes
   const positioned = {}
@@ -73,65 +72,65 @@ function radialLayout(nodes, cx, cy) {
   const leftBranches  = mainBranches.slice(0, half)
   const rightBranches = mainBranches.slice(half)
 
-  const ROW_H      = 28   // px pro Textzeile
-  const BRANCH_GAP = 48   // zusätzlicher Abstand zwischen Hauptästen
-  const MAIN_X     = 200  // Abstand Root -> Hauptast-Box
-  const SUB_X_STEP = 130  // x-Abstand pro Tiefe ab depth=2
+  const MAIN_X_OFFSET = 220   // Abstand Root -> Hauptast
+  const MAIN_Y_GAP    = 120   // Abstand zwischen Hauptästen
+  const SUB_X_STEP    = 160   // Horizontaler Schritt pro Tiefe
+  const SUB_Y_GAP     = 32    // Vertikaler Abstand zwischen Unterknoten
 
-  // Gesamthöhe eines Subtrees in Zeilen
-  function subtreeH(id, collapsed) {
+  // Berechne Gesamthöhe eines Subtrees (Anzahl Blätter * GAP)
+  function subtreeH(id) {
     const ch = nodes.filter(n => n.parent_id === id)
-    if (ch.length === 0 || collapsed[id]) return ROW_H
-    return ch.reduce((s, c) => s + subtreeH(c.id, collapsed), 0)
+    if (ch.length === 0) return SUB_Y_GAP
+    return ch.reduce((s, c) => s + subtreeH(c.id), 0)
   }
 
-  // Rekursiv Unterknoten platzieren
-  function placeSubtree(nodeId, depth, yTop, side, collapsed) {
-    const children = nodes.filter(n => n.parent_id === nodeId)
-    if (!children.length || collapsed[nodeId]) return
+  function placeBranch(branchNode, baseX, side) {
+    // Hauptast-Position
+    const mainBranchIdx = mainBranches.indexOf(branchNode)
+    // wird weiter unten gesetzt
 
-    const parentX = positioned[nodeId].x
-    // x: für depth>=2 weiter vom Stamm weg
-    const childX = side === 'right'
-      ? parentX + SUB_X_STEP
-      : parentX - SUB_X_STEP
+    // Rekursiv Unterknoten platzieren
+    function placeChildren(nodeId, depth, yStart) {
+      const children = nodes.filter(n => n.parent_id === nodeId)
+      const totalH = children.reduce((s, c) => s + subtreeH(c.id), 0)
+      const parentY = positioned[nodeId]?.y ?? cy
+      let curY = parentY - totalH / 2
 
-    let curY = yTop
-    children.forEach(child => {
-      const h = subtreeH(child.id, collapsed)
-      const childY = curY + h / 2
-      positioned[child.id] = { x: childX, y: childY, side }
-      placeSubtree(child.id, depth + 1, curY, side, collapsed)
-      curY += h
-    })
+      children.forEach(child => {
+        const h = subtreeH(child.id)
+        const childY = curY + h / 2
+        const childX = baseX + (side === 'right' ? depth * SUB_X_STEP : -depth * SUB_X_STEP)
+        positioned[child.id] = { x: childX, y: childY }
+        placeChildren(child.id, depth + 1, curY)
+        curY += h
+      })
+    }
+
+    placeChildren(branchNode.id, 1, positioned[branchNode.id]?.y ?? cy)
   }
 
-  const collapsed = {}  // Layout ignoriert collapse (collapse nur visuell)
-
-  // ── Linke Äste ──
-  const leftH = leftBranches.reduce((s,b) => s + subtreeH(b.id, collapsed) + BRANCH_GAP, 0) - BRANCH_GAP
-  let ly = cy - leftH / 2
+  // Platziere linke Äste
+  const leftTotalH = leftBranches.reduce((s, b) => s + subtreeH(b.id), 0)
+  let leftY = cy - leftTotalH / 2
   leftBranches.forEach(b => {
-    const h = subtreeH(b.id, collapsed)
-    const by = ly + h / 2
-    positioned[b.id] = { x: cx - MAIN_X, y: by, side: 'left' }
-    placeSubtree(b.id, 2, ly, 'left', collapsed)
-    ly += h + BRANCH_GAP
+    const h = subtreeH(b.id)
+    positioned[b.id] = { x: cx - MAIN_X_OFFSET, y: leftY + h / 2 }
+    leftY += h
+    placeBranch(b, cx - MAIN_X_OFFSET, 'left')
   })
 
-  // ── Rechte Äste ──
-  const rightH = rightBranches.reduce((s,b) => s + subtreeH(b.id, collapsed) + BRANCH_GAP, 0) - BRANCH_GAP
-  let ry = cy - rightH / 2
+  // Platziere rechte Äste
+  const rightTotalH = rightBranches.reduce((s, b) => s + subtreeH(b.id), 0)
+  let rightY = cy - rightTotalH / 2
   rightBranches.forEach(b => {
-    const h = subtreeH(b.id, collapsed)
-    const by = ry + h / 2
-    positioned[b.id] = { x: cx + MAIN_X, y: by, side: 'right' }
-    placeSubtree(b.id, 2, ry, 'right', collapsed)
-    ry += h + BRANCH_GAP
+    const h = subtreeH(b.id)
+    positioned[b.id] = { x: cx + MAIN_X_OFFSET, y: rightY + h / 2 }
+    rightY += h
+    placeBranch(b, cx + MAIN_X_OFFSET, 'right')
   })
 
   return nodes.map(n => positioned[n.id]
-    ? { ...n, x: positioned[n.id].x, y: positioned[n.id].y, side: positioned[n.id]?.side }
+    ? { ...n, x: positioned[n.id].x, y: positioned[n.id].y }
     : n
   )
 }
@@ -156,12 +155,7 @@ function RichTextEditor({ value, onChange, accentColor }) {
       const Q = window.Quill; if (!Q) return
       quillRef.current = new Q(containerRef.current, {
         theme: 'snow', placeholder: 'Kommentar schreiben...',
-        modules: { toolbar: [
-          ['bold','italic','underline','strike'],
-          [{ color: [] }, { background: [] }],
-          [{ list:'ordered' }, { list:'bullet' }],
-          ['clean']
-        ] }
+        modules: { toolbar: [['bold','italic','underline','strike'],[{list:'ordered'},{list:'bullet'}],['clean']] }
       })
       if (value) quillRef.current.clipboard.dangerouslyPasteHTML(value)
       quillRef.current.on('text-change', () => {
@@ -504,83 +498,6 @@ export default function Editor() {
   }
 
   // ── Word Export ───────────────────────────────────────────
-  // ── HTML -> docx TextRuns konvertieren ──────────────────────
-  const htmlToRuns = (html) => {
-    if (!html) return []
-    const runs = []
-
-    // Parse HTML mit einem temporären DOM-Element
-    const div = document.createElement('div')
-    div.innerHTML = html
-
-    const cssColorToHex = (cssColor) => {
-      if (!cssColor) return undefined
-      // rgb(r,g,b) -> hex
-      const m = cssColor.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
-      if (m) {
-        return [m[1],m[2],m[3]].map(x => parseInt(x).toString(16).padStart(2,'0')).join('').toUpperCase()
-      }
-      // #rrggbb oder benannte Farben
-      if (cssColor.startsWith('#')) return cssColor.slice(1).toUpperCase()
-      return undefined
-    }
-
-    const processNode = (el, fmt) => {
-      if (el.nodeType === Node.TEXT_NODE) {
-        const text = el.textContent.replace(/\n/g,' ')
-        if (text) runs.push(new TextRun({ text, ...fmt }))
-        return
-      }
-      if (el.nodeType !== Node.ELEMENT_NODE) return
-
-      const tag  = el.tagName.toLowerCase()
-      const style = el.getAttribute('style') || ''
-
-      // Inline-Styles auslesen
-      const colorMatch = style.match(/(?<!background-)color:\s*([^;]+)/)
-      const bgMatch    = style.match(/background-color:\s*([^;]+)/)
-
-      const fgHex = colorMatch ? cssColorToHex(colorMatch[1].trim()) : undefined
-      const bgHex = bgMatch    ? cssColorToHex(bgMatch[1].trim())    : undefined
-
-      const newFmt = {
-        ...fmt,
-        bold:          fmt.bold      || tag==='strong' || tag==='b',
-        italics:       fmt.italics   || tag==='em'     || tag==='i',
-        underline:     fmt.underline || tag==='u'      ? {} : fmt.underline,
-        strike:        fmt.strike    || tag==='s'      || tag==='del',
-        color:         fgHex || fmt.color,
-        highlight:     bgHex ? undefined : fmt.highlight,  // highlight via shading
-        shading:       bgHex ? { fill: bgHex } : fmt.shading,
-        size:          tag==='h1' ? 32 : tag==='h2' ? 28 : tag==='h3' ? 24 : (fmt.size || 22),
-      }
-
-      if (tag === 'br') { runs.push(new TextRun({ text: '', break: 1 })); return }
-      if (tag === 'p' || tag === 'div') {
-        if (runs.length > 0) runs.push(new TextRun({ text: '', break: 1 }))
-        el.childNodes.forEach(child => processNode(child, newFmt))
-        runs.push(new TextRun({ text: '', break: 1 }))
-        return
-      }
-      if (tag === 'li') {
-        runs.push(new TextRun({ text: '• ', ...newFmt }))
-        el.childNodes.forEach(child => processNode(child, newFmt))
-        runs.push(new TextRun({ text: '', break: 1 }))
-        return
-      }
-
-      el.childNodes.forEach(child => processNode(child, newFmt))
-    }
-
-    div.childNodes.forEach(child => processNode(child, { size: 22 }))
-
-    // Leere führende/trailing Breaks entfernen
-    while (runs.length && !runs[0].text) runs.shift()
-    while (runs.length && !runs[runs.length-1].text) runs.pop()
-
-    return runs.length ? runs : [new TextRun({ text: '' })]
-  }
-
   const exportToWord = async () => {
     const ordered = getOrderedNodes(nodes)
     const children = [
@@ -590,31 +507,22 @@ export default function Editor() {
       const depth = getDepth(node, nodes)
       const num   = getOutlineNumber(node, nodes)
       const hMap  = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3]
-
-      // Knoten-Überschrift
       children.push(new Paragraph({
         children: [
           new TextRun({ text: num ? num+'  ' : '', bold: true, color: '2563eb', size: Math.max(24-depth*2,18) }),
           new TextRun({ text: node.label, bold: depth===0, size: Math.max(24-depth*2,18) })
         ],
         heading: hMap[Math.min(depth,2)],
-        indent: { left: depth*360 }, spacing: { before: depth===0?300:100, after: node.comment?40:80 }
+        indent: { left: depth*360 }, spacing: { before: depth===0?300:100, after:80 }
       }))
-
-      // Kommentar mit exaktem Formatting
-      if (node.comment && node.comment.trim()) {
-        const runs = htmlToRuns(node.comment)
-        if (runs.length) {
-          children.push(new Paragraph({
-            children: runs,
-            indent: { left: depth*360+360 },
-            spacing: { after: 80 },
-            border: { left: { style: 'single', size: 4, color: 'CBD5E0', space: 8 } }
-          }))
-        }
+      if (node.comment) {
+        const plain = node.comment.replace(/<[^>]*>/g,'').replace(/&nbsp;/g,' ').trim()
+        if (plain) children.push(new Paragraph({
+          children: [new TextRun({ text: plain, italics: true, color: '64748b', size: 18 })],
+          indent: { left: depth*360+360 }, spacing: { after: 60 }
+        }))
       }
     })
-
     const doc  = new Document({ sections: [{ properties:{}, children }] })
     const blob = await Packer.toBlob(doc)
     saveAs(blob, `${mapTitle||'MindMap'}.docx`)
@@ -630,140 +538,128 @@ export default function Editor() {
 
   // ── SVG Node rendering ────────────────────────────────────
   const renderNode = (node) => {
-    const color   = getBranchColor(node, nodes)
-    const depth   = getDepth(node, nodes)
-    const isSel   = node.id === selectedId
-    const isDrg   = node.id === dragging.current
-    const isDropT = node.id === dropTargetId
-    const isColl  = isCollapsed(node.id)
-    const hasKids = hasChildren(node.id)
-    const root    = nodes.find(n => !n.parent_id)
-    const isRight = root ? node.x >= root.x : true
-    const childCount = nodes.filter(n => n.parent_id === node.id).length
+    const color    = getBranchColor(node, nodes)
+    const depth    = getDepth(node, nodes)
+    const isRoot   = depth === 0
+    const isSel    = node.id === selectedId
+    const isDrg    = node.id === dragging.current
+    const isDropT  = node.id === dropTargetId
+    const isColl   = isCollapsed(node.id)
+    const hasKids  = hasChildren(node.id)
 
-    // ── Root: fetter Text, kein Rahmen ──
-    if (depth === 0) {
-      const R = 48
+    // Root: großer gefüllter Kreis mit Text
+    if (isRoot) {
+      const R = 54
       return (
         <g key={node.id} style={{ opacity: isDrg ? 0.7 : 1 }}>
-          {isSel && <>
-            <circle className="node-halo-outer" cx={node.x} cy={node.y} r={R+18} fill="#64748b" style={{ filter:'blur(18px)' }}/>
-            <circle className="node-halo-inner" cx={node.x} cy={node.y} r={R+9}  fill="#64748b" style={{ filter:'blur(7px)' }}/>
-          </>}
-          <circle cx={node.x} cy={node.y} r={R} fill="white"
-            stroke={isSel ? '#64748b' : '#e2e8f0'} strokeWidth={isSel?2:1.5}
+          {isSel && (
+            <>
+              <circle className="node-halo-outer" cx={node.x} cy={node.y} r={R+18}
+                fill={color} style={{ filter:'blur(16px)' }}/>
+              <circle className="node-halo-inner" cx={node.x} cy={node.y} r={R+9}
+                fill={color} style={{ filter:'blur(7px)' }}/>
+            </>
+          )}
+          <circle cx={node.x} cy={node.y} r={R}
+            fill="white" stroke={isSel ? color : '#e2e8f0'} strokeWidth={isSel ? 2.5 : 1.5}
             filter="url(#sh)" style={{ cursor:'grab' }}
             onMouseDown={e => onNodeDown(e, node.id)}
             onDoubleClick={e => { e.stopPropagation(); openRename(node) }}
             onClick={() => setSelectedId(node.id)}/>
-          <text x={node.x} y={node.y+6} textAnchor="middle"
-            fill="#1e293b" fontSize="18" fontWeight="800" letterSpacing="-0.5"
+          <text x={node.x} y={node.y+5} textAnchor="middle"
+            fill="#1e293b" fontSize="15" fontWeight="700"
             style={{ pointerEvents:'none', userSelect:'none' }}>
-            {node.label.length > 12 ? node.label.slice(0,11)+'…' : node.label}
+            {node.label.length > 14 ? node.label.slice(0,13)+'…' : node.label}
           </text>
         </g>
       )
     }
 
-    // ── Hauptast (depth=1): abgerundetes Rechteck, farbig gefüllt ──
+    // Hauptast (depth=1): abgerundetes Rechteck mit Farbe
     if (depth === 1) {
-      const chars = node.label.length
-      const W = Math.min(Math.max(chars * 8.5 + 28, 72), 160)
-      const H = 34
-      // Badge: Anzahl aller Nachkommen
-      const descCount = getDesc(node.id, nodes).length - 1
+      const W = Math.max(node.label.length * 8 + 32, 80), H = 36
       return (
         <g key={node.id} style={{ opacity: isDrg ? 0.7 : 1 }}>
-          {isSel && <>
-            <rect className="node-halo-outer"
-              x={node.x-W/2-14} y={node.y-H/2-14} width={W+28} height={H+28} rx="22"
-              fill={color} style={{ filter:'blur(14px)' }}/>
-            <rect className="node-halo-inner"
-              x={node.x-W/2-7} y={node.y-H/2-7} width={W+14} height={H+14} rx="16"
-              fill={color} style={{ filter:'blur(6px)' }}/>
-          </>}
+          {isSel && (
+            <>
+              <rect className="node-halo-outer"
+                x={node.x-W/2-14} y={node.y-H/2-14} width={W+28} height={H+28} rx="20"
+                fill={color} style={{ filter:'blur(14px)' }}/>
+              <rect className="node-halo-inner"
+                x={node.x-W/2-7} y={node.y-H/2-7} width={W+14} height={H+14} rx="14"
+                fill={color} style={{ filter:'blur(6px)' }}/>
+            </>
+          )}
           {isDropT && (
-            <rect x={node.x-W/2-8} y={node.y-H/2-8} width={W+16} height={H+16} rx="18"
+            <rect x={node.x-W/2-8} y={node.y-H/2-8} width={W+16} height={H+16} rx="16"
               fill={color+'22'} stroke={color} strokeWidth="2.5">
               <animate attributeName="strokeOpacity" values="0.3;1;0.3" dur="0.8s" repeatCount="indefinite"/>
             </rect>
           )}
-          <rect x={node.x-W/2} y={node.y-H/2} width={W} height={H} rx="11"
-            fill={color+'28'} stroke={color} strokeWidth="1.5"
+          <rect x={node.x-W/2} y={node.y-H/2} width={W} height={H} rx="10"
+            fill={color+'22'} stroke={color} strokeWidth="1.5"
             style={{ cursor:'grab' }}
             onMouseDown={e => onNodeDown(e, node.id)}
             onDoubleClick={e => { e.stopPropagation(); openRename(node) }}
             onClick={() => setSelectedId(node.id)}/>
           <text x={node.x} y={node.y+5} textAnchor="middle"
-            fill={color} fontSize="12.5" fontWeight="700"
+            fill={color} fontSize="13" fontWeight="700"
             style={{ pointerEvents:'none', userSelect:'none' }}>
-            {node.label.length > 16 ? node.label.slice(0,15)+'…' : node.label}
+            {node.label.length > 18 ? node.label.slice(0,17)+'…' : node.label}
           </text>
-          {/* Badge Nachkommenanzahl */}
-          {isColl && descCount > 0 && (
-            <g>
-              <circle cx={isRight ? node.x+W/2+10 : node.x-W/2-10} cy={node.y-H/2+1} r={10}
-                fill={color} fillOpacity="0.18" stroke={color} strokeWidth="1"/>
-              <text x={isRight ? node.x+W/2+10 : node.x-W/2-10} y={node.y-H/2+5}
-                textAnchor="middle" fill={color} fontSize="8" fontWeight="600"
-                style={{ pointerEvents:'none' }}>{descCount}</text>
+          {/* Collapse Button */}
+          {hasKids && (
+            <g style={{ cursor:'pointer' }} onClick={e => { e.stopPropagation(); toggleCollapse(node.id) }}>
+              <circle cx={node.x+W/2+12} cy={node.y} r={9} fill={color} fillOpacity="0.2" stroke={color} strokeWidth="1"/>
+              <text x={node.x+W/2+12} y={node.y+4} textAnchor="middle"
+                fill={color} fontSize="9" fontWeight="700" style={{ pointerEvents:'none' }}>
+                {isColl ? '▶' : '▼'}
+              </text>
             </g>
           )}
         </g>
       )
     }
 
-    // ── Tiefe 2+: reiner Text mit Unterstrichlinie ──
-    // Text rechtsbündig (links) oder linksbündig (rechts)
-    const fs    = depth === 2 ? 12 : 11
-    const maxCh = depth === 2 ? 24 : 22
-    const label = node.label.length > maxCh ? node.label.slice(0, maxCh-1)+'…' : node.label
-    // Ungefähre Textbreite für Unterstrich
-    const tw    = label.length * fs * 0.55 + 4
-
-    // Richtung für Badge
-    const badgeX = isRight ? node.x + tw + 12 : node.x - tw - 12
-    const descCount2 = nodes.filter(n => n.parent_id === node.id).length
+    // Tiefe 2+: nur Text mit Unterstrich-Linie
+    const textLen = node.label.length * 7 + 10
+    const root    = nodes.find(n => !n.parent_id)
+    const isRight = root ? node.x > root.x : true
 
     return (
-      <g key={node.id} style={{ opacity: isDrg ? 0.65 : 1 }}
+      <g key={node.id} style={{ opacity: isDrg ? 0.6 : 1 }}
         onMouseDown={e => onNodeDown(e, node.id)}
         onDoubleClick={e => { e.stopPropagation(); openRename(node) }}
         onClick={() => setSelectedId(node.id)}>
-        {/* Selektion: weicher Glow hinter Text */}
         {isSel && (
-          <rect
-            x={isRight ? node.x - 3 : node.x - tw - 1}
-            y={node.y - fs}
-            width={tw + 4} height={fs + 6} rx="3"
-            fill={color} style={{ filter:'blur(6px)', opacity:0.45 }}/>
+          <rect x={isRight ? node.x-4 : node.x-textLen+4} y={node.y-13}
+            width={textLen} height={22} rx="4"
+            fill={color} style={{ filter:'blur(7px)', opacity:0.4 }}/>
         )}
-        {/* Unterstrichlinie */}
+        {/* Unterstrich */}
         <line
-          x1={isRight ? node.x : node.x - tw}
-          y1={node.y + fs * 0.55}
-          x2={isRight ? node.x + tw : node.x}
-          y2={node.y + fs * 0.55}
-          stroke={color} strokeWidth="0.8" strokeOpacity="0.45"/>
-        {/* Label */}
+          x1={isRight ? node.x-4 : node.x-textLen+4}
+          y1={node.y+10}
+          x2={isRight ? node.x+textLen-4 : node.x+4}
+          y2={node.y+10}
+          stroke={color} strokeWidth="1" strokeOpacity="0.4"/>
         <text
           x={isRight ? node.x : node.x}
-          y={node.y + fs * 0.4}
+          y={node.y+4}
           textAnchor={isRight ? 'start' : 'end'}
-          fill={isSel ? color : '#2d3748'}
-          fontSize={fs}
-          fontWeight={isSel ? '600' : '400'}
+          fill={isSel ? color : '#334155'}
+          fontSize={depth===2 ? 12 : 11}
+          fontWeight={isSel ? '600' : depth===2 ? '500' : '400'}
           style={{ cursor:'pointer', userSelect:'none' }}>
-          {label}
+          {node.label.length > 22 ? node.label.slice(0,21)+'…' : node.label}
         </text>
-        {/* Badge: Anzahl Kinder wenn collapsed */}
-        {isColl && descCount2 > 0 && (
-          <g onClick={e => { e.stopPropagation(); toggleCollapse(node.id) }} style={{ cursor:'pointer' }}>
-            <circle cx={badgeX} cy={node.y - fs*0.3} r={8}
-              fill={color} fillOpacity="0.18" stroke={color} strokeWidth="0.8"/>
-            <text x={badgeX} y={node.y - fs*0.3 + 4} textAnchor="middle"
-              fill={color} fontSize="8" fontWeight="600" style={{ pointerEvents:'none' }}>
-              {descCount2}
+        {/* Kleine Collapse-Markierung */}
+        {hasKids && (
+          <g style={{ cursor:'pointer' }} onClick={e => { e.stopPropagation(); toggleCollapse(node.id) }}>
+            <text x={isRight ? node.x-8 : node.x+8} y={node.y+4}
+              textAnchor={isRight ? 'end' : 'start'}
+              fill={color} fontSize="9" style={{ pointerEvents:'none' }}>
+              {isColl ? '▶' : '▾'}
             </text>
           </g>
         )}
@@ -771,56 +667,38 @@ export default function Editor() {
     )
   }
 
-  // ── Verbindungslinien (MindNode-Stil) ────────────────────
+  // ── Verbindungslinien ─────────────────────────────────────
   const renderEdge = (node) => {
     if (!node.parent_id) return null
     const p = nodes.find(n => n.id === node.parent_id)
     if (!p) return null
-    const color   = getBranchColor(node, nodes)
-    const depth   = getDepth(node, nodes)
-    const isDrg   = node.id === dragging.current
-    const root    = nodes.find(n => !n.parent_id)
-    const isRight = root ? node.x >= root.x : true
-    const op      = isDrg ? 0.5 : 0.55
+    const color  = getBranchColor(node, nodes)
+    const depth  = getDepth(node, nodes)
+    const isDrg  = node.id === dragging.current
+    const root   = nodes.find(n => !n.parent_id)
+    const isRight = root ? p.x >= root.x : true
 
-    // Root -> Hauptast: weiche S-Kurve
+    // Root -> Hauptast: S-Kurve
     if (depth === 1) {
-      const dx   = Math.abs(node.x - p.x)
-      const bend = dx * 0.55
-      const c1x  = p.x  + (isRight ?  bend : -bend)
-      const c2x  = node.x + (isRight ? -bend :  bend)
+      const bend = Math.abs(node.x - p.x) * 0.6
+      const c1x = p.x + (isRight ? bend : -bend)
+      const c2x = node.x + (isRight ? -bend : bend)
       return (
         <path key={`e-${node.id}`}
           d={`M ${p.x} ${p.y} C ${c1x} ${p.y}, ${c2x} ${node.y}, ${node.x} ${node.y}`}
-          fill="none" stroke={color} strokeWidth="2" strokeOpacity={op}
-          strokeLinecap="round"/>
+          fill="none" stroke={color} strokeWidth="2.5" strokeOpacity={isDrg ? 0.6 : 0.5}/>
       )
     }
 
-    // depth=2: vom Rand des Eltern-Rechtecks zur Textzeile
-    // Elternknoten ist depth=1 (Rechteck) oder depth2+ (Text)
-    const pDepth = getDepth(p, nodes)
-    const pW = pDepth === 1
-      ? Math.min(Math.max(p.label.length * 8.5 + 28, 72), 160) / 2
-      : (p.label.length * 6.5)
+    // Tiefe 2+: horizontale Linie zum Text
+    const lineEndX = isRight ? node.x - 4 : node.x + 4
+    const parentEndX = isRight ? p.x + Math.max(p.label.length * 8/2, 40) : p.x - Math.max(p.label.length * 8/2, 40)
 
-    // Startpunkt: rechter/linker Rand des Elternelementes
-    const startX = isRight ? p.x + pW : p.x - pW
-    const startY = p.y
-
-    // Endpunkt: linkes/rechtes Ende des Textes
-    const endX = isRight ? node.x : node.x
-    const endY = node.y
-
-    // Kurze sanfte Kurve
-    const midX = (startX + endX) / 2
     return (
       <path key={`e-${node.id}`}
-        d={`M ${startX} ${startY} C ${midX} ${startY}, ${midX} ${endY}, ${endX} ${endY}`}
-        fill="none" stroke={color}
-        strokeWidth={depth === 2 ? 1.2 : 0.9}
-        strokeOpacity={isDrg ? 0.5 : 0.4}
-        strokeLinecap="round"/>
+        d={`M ${parentEndX} ${p.y} C ${parentEndX + (isRight?40:-40)} ${p.y}, ${lineEndX + (isRight?-40:40)} ${node.y}, ${lineEndX} ${node.y}`}
+        fill="none" stroke={color} strokeWidth={depth===2 ? 1.5 : 1}
+        strokeOpacity={isDrg ? 0.6 : 0.35}/>
     )
   }
 
