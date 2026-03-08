@@ -7,27 +7,28 @@ import { saveAs } from 'file-saver'
 
 const DEPTH_COLORS = ['#2563eb','#16a34a','#dc2626','#d97706','#7c3aed','#0891b2','#be185d']
 
-// ── Rich Text Editor (Quill) ──────────────────────────────────
+// ── Rich Text Editor (Quill + eigene Farb-Toolbar) ───────────
+const BG_COLORS  = ['#fef08a','#bbf7d0','#bfdbfe','#fecaca','#e9d5ff','#fed7aa']
+const TXT_COLORS = ['#1e293b','#dc2626','#16a34a','#2563eb','#7c3aed','#d97706','#0891b2','#be185d']
+
 function RichTextEditor({ value, onChange, accentColor }) {
-  const containerRef = useRef(null)
-  const quillRef     = useRef(null)
+  const containerRef  = useRef(null)
+  const quillRef      = useRef(null)
   const isInternalChange = useRef(false)
+  const [bgOpen,  setBgOpen]  = useState(false)
+  const [txtOpen, setTxtOpen] = useState(false)
 
   useEffect(() => {
-    // Quill CSS laden
     if (!document.getElementById('quill-css')) {
       const link = document.createElement('link')
-      link.id   = 'quill-css'
-      link.rel  = 'stylesheet'
+      link.id = 'quill-css'; link.rel = 'stylesheet'
       link.href = 'https://cdn.quilljs.com/1.3.7/quill.snow.css'
       document.head.appendChild(link)
     }
-    // Quill Script laden
     const initQuill = () => {
       if (!containerRef.current || quillRef.current) return
       const Quill = window.Quill
       if (!Quill) return
-
       quillRef.current = new Quill(containerRef.current, {
         theme: 'snow',
         placeholder: 'Kommentar schreiben...',
@@ -35,17 +36,11 @@ function RichTextEditor({ value, onChange, accentColor }) {
           toolbar: [
             ['bold', 'italic', 'underline', 'strike'],
             [{ list: 'ordered' }, { list: 'bullet' }],
-            [{ header: [1, 2, 3, false] }],
             ['clean']
           ]
         }
       })
-
-      // Inhalt setzen
-      if (value) {
-        quillRef.current.clipboard.dangerouslyPasteHTML(value)
-      }
-
+      if (value) quillRef.current.clipboard.dangerouslyPasteHTML(value)
       quillRef.current.on('text-change', () => {
         isInternalChange.current = true
         const html = quillRef.current.root.innerHTML
@@ -53,30 +48,40 @@ function RichTextEditor({ value, onChange, accentColor }) {
         setTimeout(() => { isInternalChange.current = false }, 0)
       })
     }
-
-    if (window.Quill) {
-      initQuill()
-    } else {
+    if (window.Quill) initQuill()
+    else {
       const script = document.createElement('script')
       script.src = 'https://cdn.quilljs.com/1.3.7/quill.min.js'
       script.onload = initQuill
       document.head.appendChild(script)
     }
-
-    return () => {
-      quillRef.current = null
-    }
+    return () => { quillRef.current = null }
   }, [])
 
-  // Wert von außen aktualisieren (nur wenn anderer Knoten ausgewählt)
   useEffect(() => {
     if (!quillRef.current || isInternalChange.current) return
-    const current = quillRef.current.root.innerHTML
-    const norm    = current === '<p><br></p>' ? '' : current
-    if (norm !== value) {
-      quillRef.current.clipboard.dangerouslyPasteHTML(value || '')
-    }
+    const cur = quillRef.current.root.innerHTML
+    const norm = cur === '<p><br></p>' ? '' : cur
+    if (norm !== value) quillRef.current.clipboard.dangerouslyPasteHTML(value || '')
   }, [value])
+
+  const applyBg  = (color) => { quillRef.current?.format('background', color || false); setBgOpen(false) }
+  const applyTxt = (color) => { quillRef.current?.format('color', color); setTxtOpen(false) }
+
+  // Schließe Picker bei Klick außerhalb
+  useEffect(() => {
+    if (!bgOpen && !txtOpen) return
+    const close = () => { setBgOpen(false); setTxtOpen(false) }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [bgOpen, txtOpen])
+
+  const pickerStyle = {
+    position:'absolute', top:'100%', left:0, zIndex:200,
+    background:'white', border:'1px solid #e2e8f0', borderRadius:8,
+    padding:6, display:'flex', flexWrap:'wrap', gap:4, width:148,
+    boxShadow:'0 4px 16px rgba(0,0,0,0.12)'
+  }
 
   return (
     <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
@@ -88,8 +93,64 @@ function RichTextEditor({ value, onChange, accentColor }) {
         .ql-toolbar button:hover .ql-stroke, .ql-toolbar button.ql-active .ql-stroke { stroke: ${accentColor} !important; }
         .ql-toolbar button:hover .ql-fill, .ql-toolbar button.ql-active .ql-fill { fill: ${accentColor} !important; }
       `}</style>
+
+      {/* Eigene Farb-Buttons rechts neben der Quill-Toolbar */}
+      <div style={{ display:'flex', alignItems:'center', gap:4, padding:'3px 8px',
+        background:'white', borderRadius:'8px 8px 0 0', borderBottom:'1px solid #e2e8f0',
+        borderLeft:'1.5px solid #e2e8f0', borderRight:'1.5px solid #e2e8f0', borderTop:'1.5px solid #e2e8f0',
+        flexShrink:0 }}>
+        <span style={{ fontSize:11, color:'#94a3b8', marginRight:2 }}>Formatierung:</span>
+
+        {/* Hintergrundfarbe */}
+        <div style={{ position:'relative' }} onMouseDown={e => e.stopPropagation()}>
+          <button onMouseDown={e => { e.preventDefault(); setBgOpen(o => !o); setTxtOpen(false) }}
+            title="Hintergrundfarbe"
+            style={{ display:'flex', alignItems:'center', gap:3, padding:'3px 7px', borderRadius:5,
+              border:'1px solid #e2e8f0', background:'#f8fafc', cursor:'pointer', fontSize:11, color:'#475569' }}>
+            🖍 <span style={{ fontSize:10 }}>Hintergrund</span>
+          </button>
+          {bgOpen && (
+            <div style={pickerStyle} onMouseDown={e => e.stopPropagation()}>
+              {BG_COLORS.map(c => (
+                <div key={c} onMouseDown={() => applyBg(c)}
+                  style={{ width:22, height:22, borderRadius:4, background:c,
+                    border:'1.5px solid #e2e8f0', cursor:'pointer' }}/>
+              ))}
+              {/* Entfernen */}
+              <div onMouseDown={() => applyBg(false)} title="Entfernen"
+                style={{ width:22, height:22, borderRadius:4, cursor:'pointer',
+                  border:'1.5px solid #e2e8f0', fontSize:13, display:'flex', alignItems:'center', justifyContent:'center' }}>✕</div>
+            </div>
+          )}
+        </div>
+
+        {/* Schriftfarbe */}
+        <div style={{ position:'relative' }} onMouseDown={e => e.stopPropagation()}>
+          <button onMouseDown={e => { e.preventDefault(); setTxtOpen(o => !o); setBgOpen(false) }}
+            title="Schriftfarbe"
+            style={{ display:'flex', alignItems:'center', gap:3, padding:'3px 7px', borderRadius:5,
+              border:'1px solid #e2e8f0', background:'#f8fafc', cursor:'pointer', fontSize:11, color:'#475569' }}>
+            A <span style={{ fontSize:10 }}>Farbe</span>
+          </button>
+          {txtOpen && (
+            <div style={pickerStyle} onMouseDown={e => e.stopPropagation()}>
+              {TXT_COLORS.map(c => (
+                <div key={c} onMouseDown={() => applyTxt(c)}
+                  style={{ width:22, height:22, borderRadius:4, background:c,
+                    border:'1.5px solid #e2e8f0', cursor:'pointer' }}/>
+              ))}
+              {/* Zurücksetzen auf Standard */}
+              <div onMouseDown={() => applyTxt(false)} title="Standard"
+                style={{ width:22, height:22, borderRadius:4, cursor:'pointer',
+                  border:'1.5px solid #e2e8f0', fontSize:13, display:'flex', alignItems:'center', justifyContent:'center', color:'#475569' }}>✕</div>
+            </div>
+          )}
+        </div>
+      </div>
+
       <div ref={containerRef}
-        style={{ flex:1, border: '1.5px solid #e2e8f0', borderRadius:8, overflow:'hidden', minHeight:0 }}/>
+        style={{ flex:1, border:'1.5px solid #e2e8f0', borderTop:'none',
+          borderRadius:'0 0 8px 8px', overflow:'hidden', minHeight:0 }}/>
     </div>
   )
 }
@@ -590,6 +651,84 @@ export default function Editor() {
   const canUndo       = undoStack.current.length > 0
   const hasChildren   = (id) => nodes.some(n => n.parent_id === id)
 
+  // ── HTML → docx TextRuns (bold, italic, underline, background) ──
+  const htmlToDocxRuns = (html) => {
+    if (!html) return []
+    const runs = []
+    const div = document.createElement('div')
+    div.innerHTML = html
+
+    const hexColor = (str) => {
+      if (!str) return undefined
+      // rgb(r,g,b) → hex
+      const m = str.match(/rgb\((\d+),\s*(\d+),\s*(\d+)\)/)
+      if (m) return [m[1],m[2],m[3]].map(n => parseInt(n).toString(16).padStart(2,'0')).join('')
+      // #rrggbb oder #rgb
+      return str.replace('#','').length === 3
+        ? str.replace('#','').split('').map(c=>c+c).join('')
+        : str.replace('#','')
+    }
+
+    const walk = (el, fmt) => {
+      if (el.nodeType === 3) { // Textknoten
+        const text = el.textContent.replace(/\u00A0/g,' ')
+        if (text) runs.push(new TextRun({
+          text,
+          bold:      fmt.bold,
+          italics:   fmt.italic,
+          underline: fmt.underline ? {} : undefined,
+          strike:    fmt.strike,
+          highlight: fmt.highlight,
+          shading:   fmt.shading,
+          size: 18,
+          color: fmt.color || '334155',
+        }))
+        return
+      }
+      if (el.nodeType !== 1) return
+      const tag  = el.tagName.toLowerCase()
+      const style = el.style || {}
+      const newFmt = { ...fmt }
+      if (tag==='b'||tag==='strong') newFmt.bold = true
+      if (tag==='i'||tag==='em')     newFmt.italic = true
+      if (tag==='u')                 newFmt.underline = true
+      if (tag==='s'||tag==='strike') newFmt.strike = true
+      // Schriftfarbe aus style
+      const fc = style.color
+      if (fc) { const hex = hexColor(fc); if (hex) newFmt.color = hex }
+      // Hintergrundfarbe aus style
+      const bg = style.backgroundColor || style.background
+      if (bg) {
+        const hex = hexColor(bg)
+        // Docx unterstützt named highlights + custom shading
+        const namedMap = {
+          'fef08a':'yellow','bbf7d0':'green','bfdbfe':'cyan',
+          'fecaca':'red','e9d5ff':'magenta','fed7aa':'darkYellow'
+        }
+        const named = hex ? namedMap[hex.toLowerCase()] : null
+        if (named) {
+          newFmt.highlight = named
+          newFmt.shading   = undefined
+        } else if (hex) {
+          newFmt.highlight = undefined
+          newFmt.shading   = { type: 'clear', color: 'auto', fill: hex }
+        }
+      }
+      // Zeilenumbruch bei Block-Elementen
+      if (tag==='p'||tag==='div'||tag==='li') {
+        el.childNodes.forEach(c => walk(c, newFmt))
+        runs.push(new TextRun({ text: '', break: 1 }))
+      } else {
+        el.childNodes.forEach(c => walk(c, newFmt))
+      }
+    }
+
+    div.childNodes.forEach(c => walk(c, { bold:false, italic:false, underline:false, strike:false }))
+    // Letzten leeren Break entfernen
+    while (runs.length > 0 && runs[runs.length-1].text === '' ) runs.pop()
+    return runs
+  }
+
   // ── Word Export ──────────────────────────────────────────
   const exportToWord = async () => {
     const ordered = getOrderedNodes(nodes)
@@ -619,12 +758,12 @@ export default function Editor() {
         spacing: { before: depth === 0 ? 300 : 100, after: 80 },
       }))
 
-      // Kommentar (HTML Tags entfernen)
+      // Kommentar: HTML zu docx TextRuns konvertieren (bold, italic, background)
       if (node.comment && node.comment.trim()) {
-        const plainText = node.comment.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim()
-        if (plainText) {
+        const runs = htmlToDocxRuns(node.comment)
+        if (runs.length > 0) {
           docChildren.push(new Paragraph({
-            children: [new TextRun({ text: plainText, italics: true, color: '64748b', size: 18 })],
+            children: runs,
             indent: { left: depth * 360 + 360 },
             spacing: { after: 60 },
           }))
@@ -983,6 +1122,20 @@ export default function Editor() {
                 const num    = getOutlineNumber(node, nodes)
                 const isSel  = node.id === selectedId
                 const isOver = node.id === listDragOver
+                const isColl = !!collapsed[node.id]
+                const hasKids = nodes.some(n => n.parent_id === node.id)
+
+                // Versteckt wenn ein Vorfahre in der Liste eingeklappt ist
+                const isHidden = (() => {
+                  let cur = nodes.find(n => n.id === node.parent_id)
+                  while (cur) {
+                    if (collapsed[cur.id]) return true
+                    cur = nodes.find(n => n.id === cur.parent_id)
+                  }
+                  return false
+                })()
+                if (isHidden) return null
+
                 return (
                   <div key={node.id}
                     draggable
@@ -1008,6 +1161,16 @@ export default function Editor() {
                       {node.label}
                     </span>
                     {node.comment && <span style={{ fontSize:10, color:'#94a3b8', flexShrink:0 }}>💬</span>}
+                    {/* Collapse-Button in der Liste */}
+                    {hasKids && (
+                      <button onClick={e => { e.stopPropagation(); toggleCollapse(node.id) }}
+                        title={isColl ? 'Aufklappen' : 'Zuklappen'}
+                        style={{ background: isColl ? color : 'transparent', border:`1px solid ${color}`,
+                          color: isColl ? 'white' : color, cursor:'pointer',
+                          fontSize:9, padding:'1px 5px', borderRadius:4, lineHeight:1.4, flexShrink:0, fontWeight:700 }}>
+                        {isColl ? `+${nodes.filter(n=>n.parent_id===node.id).length}` : '▾'}
+                      </button>
+                    )}
                     <button onClick={e => { e.stopPropagation(); addChild(node.id) }}
                       style={{ background:'transparent', border:'none', color, cursor:'pointer',
                         fontSize:16, padding:'0 2px', lineHeight:1, flexShrink:0 }}>+</button>

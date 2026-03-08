@@ -82,16 +82,14 @@ function RichTextEditor({ value, onChange, accentColor }) {
     <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
       <style>{`
         .ql-toolbar { border-radius: 8px 8px 0 0 !important; border-color: #e2e8f0 !important; background: white; padding: 4px 8px !important; flex-shrink: 0; }
-        .ql-container { border-radius: 0 0 8px 8px !important; border-color: #e2e8f0 !important; flex: 1; overflow-y: auto; font-family: inherit !important; font-size: 13px !important; }
+        .ql-container { border-radius: 0 0 8px 8px !important; border-color: #e2e8f0 !important; font-family: inherit !important; font-size: 13px !important; }
         .ql-editor { min-height: 60px; line-height: 1.7; color: #334155; padding: 10px 12px; }
         .ql-editor.ql-blank::before { color: #94a3b8; font-style: normal; }
         .ql-toolbar button:hover .ql-stroke, .ql-toolbar button.ql-active .ql-stroke { stroke: ${accentColor} !important; }
         .ql-toolbar button:hover .ql-fill, .ql-toolbar button.ql-active .ql-fill { fill: ${accentColor} !important; }
       `}</style>
-      <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden',
-        border: '1.5px solid #e2e8f0', borderRadius:8 }}>
-        <div ref={containerRef} style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}/>
-      </div>
+      <div ref={containerRef}
+        style={{ flex:1, border: '1.5px solid #e2e8f0', borderRadius:8, overflow:'hidden', minHeight:0 }}/>
     </div>
   )
 }
@@ -217,6 +215,10 @@ export default function Editor() {
   const [comment, setComment]       = useState('')
   const [saved, setSaved]           = useState(true)
   const [pan, setPan]               = useState({ x: 0, y: 0 })
+  const [zoom, setZoom]             = useState(1)
+  const zoomRef   = useRef(1)
+  const panRef    = useRef({ x: 0, y: 0 })
+  const setPanSync = (np) => { panRef.current = np; setPan(np) }
   const [isMobile, setIsMobile]     = useState(window.innerWidth < 768)
   const [activeTab, setActiveTab]   = useState('map')
 
@@ -347,6 +349,80 @@ export default function Editor() {
     }
   }, [])
 
+  // ── panRef synchron halten ───────────────────────────────
+
+  // ── Viewport: Browser-Pinch-Zoom verhindern ──────────────
+  useEffect(() => {
+    let meta = document.querySelector('meta[name=viewport]')
+    if (!meta) { meta = document.createElement('meta'); meta.name = 'viewport'; document.head.appendChild(meta) }
+    meta.content = 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no'
+    return () => { meta.content = 'width=device-width, initial-scale=1' }
+  }, [])
+
+  // ── Touch-Handler: Pinch-Zoom + Pan ──────────────────────
+  const touch1     = useRef(null)   // erster Touch
+  const touch2     = useRef(null)   // zweiter Touch (Pinch)
+  const pinchDist0 = useRef(0)      // Ausgangs-Pinch-Abstand
+  const pinchZoom0 = useRef(1)      // Zoom bei Pinch-Start
+  const pinchMid0  = useRef({ x:0, y:0 }) // Mittelpunkt bei Pinch-Start
+  const pinchPan0  = useRef({ x:0, y:0 }) // Pan bei Pinch-Start
+
+  const svgContainerRef = useRef()
+
+  const getDist = (a, b) => Math.hypot(b.clientX - a.clientX, b.clientY - a.clientY)
+  const getMid  = (a, b) => ({ x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 })
+
+  const onTouchStart = (e) => {
+    if (e.touches.length === 1) {
+      touch1.current = e.touches[0]
+      touch2.current = null
+      // Pan starten (wie onSvgDown bei Maus)
+      const t = e.touches[0]
+      isPanning.current = true
+      panStart.current  = { x: t.clientX - panRef.current.x, y: t.clientY - panRef.current.y }
+    } else if (e.touches.length === 2) {
+      touch1.current = e.touches[0]
+      touch2.current = e.touches[1]
+      isPanning.current = false
+      pinchDist0.current = getDist(e.touches[0], e.touches[1])
+      pinchZoom0.current = zoomRef.current
+      pinchMid0.current  = getMid(e.touches[0], e.touches[1])
+      pinchPan0.current  = { ...panRef.current }
+    }
+  }
+
+  const onTouchMove = (e) => {
+    e.preventDefault()
+    if (e.touches.length === 1 && isPanning.current) {
+      const t = e.touches[0]
+      const np = { x: t.clientX - panStart.current.x, y: t.clientY - panStart.current.y }
+      setPanSync(np)
+    } else if (e.touches.length === 2) {
+      const newDist = getDist(e.touches[0], e.touches[1])
+      const newMid  = getMid(e.touches[0], e.touches[1])
+      const scale   = Math.min(3, Math.max(0.2, pinchZoom0.current * newDist / pinchDist0.current))
+      // Zoom um den Mittelpunkt: pan anpassen damit Mittelpunkt fixiert bleibt
+      const dx = (pinchMid0.current.x - pinchPan0.current.x) / pinchZoom0.current
+      const dy = (pinchMid0.current.y - pinchPan0.current.y) / pinchZoom0.current
+      const np = {
+        x: pinchMid0.current.x - dx * scale + (newMid.x - pinchMid0.current.x),
+        y: pinchMid0.current.y - dy * scale + (newMid.y - pinchMid0.current.y),
+      }
+      zoomRef.current = scale
+      setZoom(scale)
+      setPanSync(np)
+    }
+  }
+
+  const onTouchEnd = (e) => {
+    if (e.touches.length < 2) { touch2.current = null }
+    if (e.touches.length === 0) {
+      isPanning.current = false
+      touch1.current = null
+    }
+  }
+
+
   const loadMap = async () => {
     const { data: map } = await supabase.from('maps').select('title').eq('id', mapId).single()
     if (map) setMapTitle(map.title)
@@ -434,35 +510,36 @@ export default function Editor() {
     const node = nodes.find(n => n.id === id)
     dragging.current = id
     didDrag.current  = false
-    dragOff.current  = { x: e.clientX - node.x, y: e.clientY - node.y }
+    // Offset in SVG-Koordinaten (pan + zoom korrigiert)
+    dragOff.current  = {
+      x: (e.clientX - panRef.current.x) / zoomRef.current - node.x,
+      y: (e.clientY - panRef.current.y) / zoomRef.current - node.y
+    }
   }
   const onSvgDown = (e) => {
     if (e.target === svgRef.current || e.target.tagName === 'svg') {
       isPanning.current = true
-      panStart.current  = { x: e.clientX - pan.x, y: e.clientY - pan.y }
+      panStart.current  = { x: e.clientX - panRef.current.x, y: e.clientY - panRef.current.y }
       setSelectedId(null)
     }
   }
   const onMove = useCallback((e) => {
     if (dragging.current) {
       didDrag.current = true
-      const nx = e.clientX - dragOff.current.x
-      const ny = e.clientY - dragOff.current.y
+      const nx = (e.clientX - panRef.current.x) / zoomRef.current - dragOff.current.x
+      const ny = (e.clientY - panRef.current.y) / zoomRef.current - dragOff.current.y
       setNodes(prev => prev.map(n => n.id === dragging.current ? { ...n, x: nx, y: ny } : n))
       setDragGhost({ x: e.clientX, y: e.clientY })
-      // Drop-Ziel: nur wenn Knoten wirklich ÜBER einem anderen liegt (Box-Überlappung)
       const W_BOX = 150, H_BOX = 50
       const others = nodes.filter(n => n.id !== dragging.current && !getDesc(dragging.current, nodes).slice(1).includes(n.id))
       let hit = null
       others.forEach(n => {
-        if (
-          nx > n.x - W_BOX/2 && nx < n.x + W_BOX/2 &&
-          ny > n.y - H_BOX/2 && ny < n.y + H_BOX/2
-        ) { hit = n.id }
+        if (nx > n.x - W_BOX/2 && nx < n.x + W_BOX/2 && ny > n.y - H_BOX/2 && ny < n.y + H_BOX/2) hit = n.id
       })
       setDropTargetId(hit)
     } else if (isPanning.current) {
-      setPan({ x: e.clientX - panStart.current.x, y: e.clientY - panStart.current.y })
+      const np = { x: e.clientX - panStart.current.x, y: e.clientY - panStart.current.y }
+      setPanSync(np)
     }
   }, [nodes])
 
@@ -641,7 +718,7 @@ export default function Editor() {
         </div>
 
         {/* Zeile 2: Toolbar */}
-        <div style={{ display:'flex', alignItems:'center', gap:4, padding:'0 12px 8px', flexWrap:'wrap' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:4, padding:'0 12px 8px', flexWrap:'wrap', rowGap:4 }}>
 
           {/* ── Knoten-Aktionen (nur wenn ausgewählt) ── */}
           {selectedNode ? (
@@ -650,28 +727,27 @@ export default function Editor() {
                 {getOutlineNumber(selectedNode, nodes)}
               </span>
               <div style={{ width:1, height:20, background:'#e2e8f0', margin:'0 4px' }}/>
-
-              <ToolBtn icon="✏️" label="Umbenennen" onClick={() => openRename(selectedNode)} color="#475569"/>
-              <ToolBtn icon="＋" label="Unterpunkt" onClick={() => addChild(selectedNode.id)} color="#16a34a"/>
+              <ToolBtn icon="✏️" label={isMobile ? '' : 'Umbenennen'} onClick={() => openRename(selectedNode)} color="#475569"/>
+              <ToolBtn icon="＋" label={isMobile ? '' : 'Unterpunkt'} onClick={() => addChild(selectedNode.id)} color="#16a34a"/>
               {hasChildren(selectedNode.id) && (
                 <ToolBtn
                   icon={collapsed[selectedNode.id] ? '▶' : '▼'}
-                  label={collapsed[selectedNode.id] ? 'Aufklappen' : 'Zuklappen'}
+                  label={isMobile ? '' : (collapsed[selectedNode.id] ? 'Aufklappen' : 'Zuklappen')}
                   onClick={() => toggleCollapse(selectedNode.id)}
                   color="#7c3aed"/>
               )}
               {selectedNode.parent_id && (
-                <ToolBtn icon="🗑" label="Löschen" onClick={() => deleteNode(selectedNode.id)} color="#dc2626"/>
+                <ToolBtn icon="🗑" label={isMobile ? '' : 'Löschen'} onClick={() => deleteNode(selectedNode.id)} color="#dc2626"/>
               )}
               <div style={{ width:1, height:20, background:'#e2e8f0', margin:'0 4px' }}/>
             </>
           ) : (
-            <span style={{ fontSize:11, color:'#94a3b8', marginRight:8 }}>Knoten auswählen für Aktionen</span>
+            <span style={{ fontSize:11, color:'#94a3b8', marginRight:8 }}>{isMobile ? 'Knoten antippen' : 'Knoten auswählen für Aktionen'}</span>
           )}
 
           {/* ── Allgemeine Aktionen ── */}
-          <ToolBtn icon="⊞" label="Layout" onClick={() => applyAutoLayout(nodes)} color="#475569"/>
-          <ToolBtn icon="↩" label={`Rückgängig${canUndo ? ` (${undoStack.current.length})` : ''}`}
+          <ToolBtn icon="⊞" label={isMobile ? '' : 'Layout'} onClick={() => applyAutoLayout(nodes)} color="#475569"/>
+          <ToolBtn icon="↩" label={isMobile ? '' : `Rückgängig${canUndo ? ` (${undoStack.current.length})` : ''}`}
             onClick={() => {
               if (!canUndo) return
               const prev = undoStack.current[undoStack.current.length - 1]
@@ -681,7 +757,7 @@ export default function Editor() {
               setSaved(true)
             }}
             color={canUndo ? '#475569' : '#cbd5e1'} disabled={!canUndo}/>
-          <ToolBtn icon="📄" label="→ Word" onClick={exportToWord} color="#2563eb" primary/>
+          <ToolBtn icon="📄" label={isMobile ? '' : '→ Word'} onClick={exportToWord} color="#2563eb" primary/>
         </div>
       </div>
 
@@ -690,10 +766,29 @@ export default function Editor() {
 
         {/* ── Mindmap ── */}
         {(!isMobile || activeTab==='map') && (
-          <div style={{ flex:1, position:'relative', overflow:'hidden', minWidth:0 }}>
+          <div ref={svgContainerRef} style={{ flex:1, position:'relative', overflow:'hidden', minWidth:0, touchAction:'none' }}
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}>
             <svg ref={svgRef}
               style={{ width:'100%', height:'100%', background:'#f8fafc', cursor:'default', display:'block' }}
-              onMouseDown={onSvgDown}>
+              onMouseDown={onSvgDown}
+              onWheel={e => {
+                e.preventDefault()
+                const factor = e.deltaY < 0 ? 1.1 : 0.9
+                const newZoom = Math.min(3, Math.max(0.2, zoomRef.current * factor))
+                // Zoom um Mausposition
+                const rect = svgRef.current.getBoundingClientRect()
+                const mx = e.clientX - rect.left
+                const my = e.clientY - rect.top
+                const np = {
+                  x: mx - (mx - panRef.current.x) * (newZoom / zoomRef.current),
+                  y: my - (my - panRef.current.y) * (newZoom / zoomRef.current),
+                }
+                zoomRef.current = newZoom
+                setZoom(newZoom)
+                setPanSync(np)
+              }}>
               <defs>
                 <filter id="sh"><feDropShadow dx="0" dy="2" stdDeviation="4" floodOpacity="0.1"/></filter>
                 <filter id="shd"><feDropShadow dx="0" dy="6" stdDeviation="10" floodOpacity="0.18"/></filter>
@@ -718,7 +813,7 @@ export default function Editor() {
                   .node-halo-inner { animation: nodeGlowInner 1.8s ease-in-out infinite; }
                 `}</style>
               </defs>
-              <g transform={`translate(${pan.x},${pan.y})`}>
+              <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
                 {/* Linien - nur für sichtbare nodes */}
                 {visibleNodes.map(node => {
                   if (!node.parent_id) return null
@@ -755,11 +850,14 @@ export default function Editor() {
                       <g key={node.id} style={{ opacity: isDrg ? 0.6 : 1 }}
                         onMouseDown={e => onNodeMouseDown(e, node.id)}
                         onDoubleClick={e => { e.stopPropagation(); openRename(node) }}
+                        onTouchEnd={e => { e.stopPropagation(); setSelectedId(node.id) }}
                         onClick={() => setSelectedId(node.id)}>
                         {isSel && (
                           <rect x={node.x-60} y={node.y-12} width={120} height={24} rx="4"
                             fill={color} style={{ filter:'blur(8px)', opacity:0.35 }}/>
                         )}
+                        {/* Weiße Fläche damit Linie unsichtbar hinter Text */}
+                        <rect x={node.x-65} y={node.y-11} width={130} height={22} rx="3" fill="white" stroke="none" style={{ pointerEvents:'none' }}/>
                         <text x={node.x} y={node.y+5} textAnchor="middle"
                           fill={isSel ? color : '#475569'} fontSize="11" fontWeight={isSel ? '700' : '400'}
                           style={{ cursor:'pointer', userSelect:'none' }}>
@@ -769,7 +867,7 @@ export default function Editor() {
                     )
                   }
 
-                  const W = isRoot ? 168 : 150, H = 50
+                  const W = isRoot ? 168 : 150, H = isRoot ? 32 : 28
 
                   return (
                     <g key={node.id} style={{ opacity: isDrg ? 0.65 : 1 }}>
@@ -791,8 +889,10 @@ export default function Editor() {
                           <animate attributeName="strokeOpacity" values="0.4;1;0.4" dur="0.7s" repeatCount="indefinite"/>
                         </rect>
                       )}
+                      {/* Weiße Fläche hinter Linie (damit Linie unsichtbar hinter Knoten) */}
+                      <rect x={node.x-W/2} y={node.y-H/2} width={W} height={H} rx="8" fill="white" stroke="none"/>
                       {/* Box */}
-                      <rect x={node.x-W/2} y={node.y-H/2} width={W} height={H} rx="11"
+                      <rect x={node.x-W/2} y={node.y-H/2} width={W} height={H} rx="8"
                         fill="white"
                         stroke={isDropT ? color : isSel ? color : '#e2e8f0'}
                         strokeWidth={isDropT ? 2.5 : isSel ? 2 : 1}
@@ -803,21 +903,21 @@ export default function Editor() {
                         onClick={() => setSelectedId(node.id)}
                       />
                       {/* Farbstreifen */}
-                      <rect x={node.x-W/2} y={node.y-H/2} width={5} height={H} rx="3" fill={color}/>
-                      {/* Label - kein Outline-Nummer mehr */}
-                      <text x={node.x-W/2+14} y={node.y+6}
+                      <rect x={node.x-W/2} y={node.y-H/2} width={5} height={H} rx="3" fill={color} style={{ pointerEvents:'none' }}/>
+                      {/* Label */}
+                      <text x={node.x-W/2+14} y={node.y+5}
                         fill="#1e293b" fontSize={isRoot ? 13 : 12} fontWeight={isRoot ? '700' : '500'}
                         style={{ pointerEvents:'none', userSelect:'none' }}>
                         {node.label.length > 18 ? node.label.slice(0,17)+'…' : node.label}
                       </text>
-                      {/* Collapse-Button (kleines Dreieck rechts) */}
+                      {/* Collapse-Button mit Anzahl */}
                       {childCount > 0 && (
                         <g style={{ cursor:'pointer' }} onClick={e => { e.stopPropagation(); toggleCollapse(node.id) }}>
-                          <circle cx={node.x+W/2-10} cy={node.y-H/2+10} r={9} fill={color} fillOpacity="0.15"/>
-                          <text x={node.x+W/2-10} y={node.y-H/2+14}
-                            textAnchor="middle" fill={color} fontSize="9" fontWeight="700"
+                          <circle cx={node.x+W/2-10} cy={node.y} r={9} fill={color} fillOpacity={isCollapsed ? 0.9 : 0.15}/>
+                          <text x={node.x+W/2-10} y={node.y+4}
+                            textAnchor="middle" fill={isCollapsed ? 'white' : color} fontSize="9" fontWeight="700"
                             style={{ pointerEvents:'none' }}>
-                            {isCollapsed ? '▶' : '▼'}
+                            {isCollapsed ? childCount : '▼'}
                           </text>
                         </g>
                       )}
