@@ -182,31 +182,6 @@ function autoLayout(nodes) {
 
 const MAX_UNDO = 5
 
-// ── Toolbar Button Helper ────────────────────────────────────
-function ToolBtn({ icon, label, onClick, color, disabled, primary }) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      title={label}
-      style={{
-        display:'flex', alignItems:'center', gap:4,
-        padding:'4px 10px', borderRadius:6, border: primary ? 'none' : '1px solid #e2e8f0',
-        background: primary ? color : disabled ? 'transparent' : '#f8fafc',
-        color: primary ? 'white' : disabled ? '#cbd5e1' : color,
-        cursor: disabled ? 'default' : 'pointer',
-        fontSize:12, fontWeight: primary ? 600 : 500,
-        whiteSpace:'nowrap', transition:'all 0.12s',
-        opacity: disabled ? 0.5 : 1
-      }}
-      onMouseEnter={e => { if (!disabled && !primary) e.currentTarget.style.background = color+'18' }}
-      onMouseLeave={e => { if (!disabled && !primary) e.currentTarget.style.background = '#f8fafc' }}>
-      <span style={{ fontSize:13 }}>{icon}</span>
-      <span style={{ fontSize:11 }}>{label}</span>
-    </button>
-  )
-}
-
 export default function Editor() {
   const { mapId } = useParams()
   const navigate  = useNavigate()
@@ -227,25 +202,6 @@ export default function Editor() {
 
   // Undo
   const undoStack = useRef([])
-  const [collapsed, setCollapsed] = useState({}) // nodeId -> true wenn zugeklappt
-
-  const toggleCollapse = (nodeId) => {
-    setCollapsed(prev => ({ ...prev, [nodeId]: !prev[nodeId] }))
-  }
-  // Gibt alle sichtbaren nodes zurück (collapsed berücksichtigt)
-  const getVisibleNodes = (all) => {
-    const hidden = new Set()
-    all.forEach(n => {
-      if (!n.parent_id) return
-      // Prüfe ob ein Vorfahre collapsed ist
-      let cur = n
-      while (cur.parent_id) {
-        if (collapsed[cur.parent_id]) { hidden.add(n.id); break }
-        cur = all.find(x => x.id === cur.parent_id) || {}
-      }
-    })
-    return all.filter(n => !hidden.has(n.id))
-  }
   const pushUndo  = useCallback((snap) => {
     undoStack.current = [...undoStack.current.slice(-MAX_UNDO + 1), JSON.parse(JSON.stringify(snap))]
   }, [])
@@ -507,11 +463,9 @@ export default function Editor() {
     await applyAutoLayout(next)
   }
 
-  const selectedNode  = nodes.find(n => n.id === selectedId)
-  const orderedNodes  = getOrderedNodes(nodes)
-  const visibleNodes  = getVisibleNodes(nodes)
-  const canUndo       = undoStack.current.length > 0
-  const hasChildren   = (id) => nodes.some(n => n.parent_id === id)
+  const selectedNode = nodes.find(n => n.id === selectedId)
+  const orderedNodes = getOrderedNodes(nodes)
+  const canUndo      = undoStack.current.length > 0
 
   // ── Word Export ──────────────────────────────────────────
   const exportToWord = async () => {
@@ -609,80 +563,70 @@ export default function Editor() {
         </div>
       )}
 
-      {/* ── Header (2 Zeilen) ── */}
-      <div style={{ borderBottom:'1px solid #e2e8f0', background:'white', flexShrink:0, zIndex:10 }}>
+      {/* ── Header ── */}
+      <div style={{ display:'flex', alignItems:'center', gap:10, padding:'0 16px',
+        height:50, borderBottom:'1px solid #e2e8f0', background:'white', flexShrink:0, zIndex:10 }}>
+        <button onClick={() => navigate('/dashboard')}
+          style={{ background:'transparent', border:'1px solid #e2e8f0', color:'#64748b',
+            padding:'5px 12px', borderRadius:6, cursor:'pointer', fontSize:12, whiteSpace:'nowrap' }}>
+          ← Dashboard
+        </button>
+        <span style={{ fontWeight:700, fontSize:15, color:'#1e293b', flex:1,
+          overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{mapTitle}</span>
 
-        {/* Zeile 1: Titel + Status */}
-        <div style={{ display:'flex', alignItems:'center', gap:10, padding:'0 16px', height:44 }}>
-          <button onClick={() => navigate('/dashboard')}
-            style={{ background:'transparent', border:'1px solid #e2e8f0', color:'#64748b',
-              padding:'4px 10px', borderRadius:6, cursor:'pointer', fontSize:11, whiteSpace:'nowrap' }}>
-            ← Dashboard
-          </button>
-          <span style={{ fontWeight:700, fontSize:15, color:'#1e293b', flex:1,
-            overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{mapTitle}</span>
-          <span style={{ fontSize:11, color: saved ? '#22c55e' : '#f59e0b', fontWeight:600, flexShrink:0 }}>
-            {saved ? '✓ Gespeichert' : '⟳ Speichern…'}
-          </span>
-          {isMobile && (
-            <div style={{ display:'flex', gap:3, background:'#f1f5f9', borderRadius:7, padding:3 }}>
-              {[['map','🗺'],['list','☰']].map(([tab, icon]) => (
-                <button key={tab} onClick={() => setActiveTab(tab)}
-                  style={{ padding:'4px 10px', borderRadius:5, border:'none', cursor:'pointer', fontSize:12,
-                    background: activeTab===tab ? 'white' : 'transparent',
-                    color: activeTab===tab ? '#2563eb' : '#64748b',
-                    fontWeight: activeTab===tab ? 600 : 400,
-                    boxShadow: activeTab===tab ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
-                  {icon}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Auto-Layout Button */}
+        <button onClick={() => applyAutoLayout(nodes)}
+          title="Knoten neu anordnen"
+          style={{ background:'#f1f5f9', border:'1px solid #e2e8f0', color:'#334155',
+            padding:'5px 10px', borderRadius:6, cursor:'pointer', fontSize:12, whiteSpace:'nowrap' }}>
+          ⊞ Layout
+        </button>
 
-        {/* Zeile 2: Toolbar */}
-        <div style={{ display:'flex', alignItems:'center', gap:4, padding:'0 12px 8px', flexWrap:'wrap' }}>
+        {/* Word Export */}
+        <button onClick={exportToWord}
+          title="Als Word exportieren"
+          style={{ background:'#2563eb', border:'none', color:'white',
+            padding:'5px 12px', borderRadius:6, cursor:'pointer', fontSize:12, whiteSpace:'nowrap',
+            fontWeight:600 }}>
+          ↓ Word
+        </button>
 
-          {/* ── Knoten-Aktionen (nur wenn ausgewählt) ── */}
-          {selectedNode ? (
-            <>
-              <span style={{ fontSize:10, color:'#94a3b8', fontWeight:600, marginRight:4, textTransform:'uppercase', letterSpacing:0.5 }}>
-                {getOutlineNumber(selectedNode, nodes)}
-              </span>
-              <div style={{ width:1, height:20, background:'#e2e8f0', margin:'0 4px' }}/>
+        {/* Undo */}
+        <button onClick={() => {
+          if (!canUndo) return
+          const prev = undoStack.current[undoStack.current.length - 1]
+          undoStack.current = undoStack.current.slice(0, -1)
+          setNodes(prev)
+          supabase.from('nodes').delete().eq('map_id', mapId).then(() => supabase.from('nodes').insert(prev))
+          setSaved(true)
+        }}
+          disabled={!canUndo}
+          title="Rückgängig (Strg+Z)"
+          style={{ background: canUndo ? '#f1f5f9' : 'transparent',
+            border:'1px solid #e2e8f0', color: canUndo ? '#334155' : '#cbd5e1',
+            padding:'5px 10px', borderRadius:6, cursor: canUndo ? 'pointer' : 'default',
+            fontSize:13, whiteSpace:'nowrap' }}>
+          ↩ {canUndo ? `(${undoStack.current.length})` : ''}
+        </button>
 
-              <ToolBtn icon="✏️" label="Umbenennen" onClick={() => openRename(selectedNode)} color="#475569"/>
-              <ToolBtn icon="＋" label="Unterpunkt" onClick={() => addChild(selectedNode.id)} color="#16a34a"/>
-              {hasChildren(selectedNode.id) && (
-                <ToolBtn
-                  icon={collapsed[selectedNode.id] ? '▶' : '▼'}
-                  label={collapsed[selectedNode.id] ? 'Aufklappen' : 'Zuklappen'}
-                  onClick={() => toggleCollapse(selectedNode.id)}
-                  color="#7c3aed"/>
-              )}
-              {selectedNode.parent_id && (
-                <ToolBtn icon="🗑" label="Löschen" onClick={() => deleteNode(selectedNode.id)} color="#dc2626"/>
-              )}
-              <div style={{ width:1, height:20, background:'#e2e8f0', margin:'0 4px' }}/>
-            </>
-          ) : (
-            <span style={{ fontSize:11, color:'#94a3b8', marginRight:8 }}>Knoten auswählen für Aktionen</span>
-          )}
+        <span style={{ fontSize:11, color: saved ? '#22c55e' : '#f59e0b', fontWeight:600, flexShrink:0 }}>
+          {saved ? '✓' : '⟳'}
+        </span>
 
-          {/* ── Allgemeine Aktionen ── */}
-          <ToolBtn icon="⊞" label="Layout" onClick={() => applyAutoLayout(nodes)} color="#475569"/>
-          <ToolBtn icon="↩" label={`Rückgängig${canUndo ? ` (${undoStack.current.length})` : ''}`}
-            onClick={() => {
-              if (!canUndo) return
-              const prev = undoStack.current[undoStack.current.length - 1]
-              undoStack.current = undoStack.current.slice(0, -1)
-              setNodes(prev)
-              supabase.from('nodes').delete().eq('map_id', mapId).then(() => supabase.from('nodes').insert(prev))
-              setSaved(true)
-            }}
-            color={canUndo ? '#475569' : '#cbd5e1'} disabled={!canUndo}/>
-          <ToolBtn icon="📄" label="→ Word" onClick={exportToWord} color="#2563eb" primary/>
-        </div>
+        {isMobile && (
+          <div style={{ display:'flex', gap:3, background:'#f1f5f9', borderRadius:7, padding:3 }}>
+            {[['map','🗺'],['list','☰']].map(([tab, icon]) => (
+              <button key={tab} onClick={() => setActiveTab(tab)}
+                style={{ padding:'4px 10px', borderRadius:5, border:'none', cursor:'pointer', fontSize:12,
+                  background: activeTab===tab ? 'white' : 'transparent',
+                  color: activeTab===tab ? '#2563eb' : '#64748b',
+                  fontWeight: activeTab===tab ? 600 : 400,
+                  boxShadow: activeTab===tab ? '0 1px 3px rgba(0,0,0,0.1)' : 'none' }}>
+                {icon}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Body ── */}
@@ -719,8 +663,8 @@ export default function Editor() {
                 `}</style>
               </defs>
               <g transform={`translate(${pan.x},${pan.y})`}>
-                {/* Linien - nur für sichtbare nodes */}
-                {visibleNodes.map(node => {
+                {/* Linien */}
+                {nodes.map(node => {
                   if (!node.parent_id) return null
                   const p = nodes.find(n => n.id === node.parent_id)
                   if (!p) return null
@@ -738,56 +682,35 @@ export default function Editor() {
                       strokeDasharray={isDrg ? '6 3' : 'none'}/>
                   )
                 })}
-                {/* Nodes - nur sichtbare */}
-                {visibleNodes.map(node => {
-                  const color    = getColor(node, nodes)
-                  const isRoot   = !node.parent_id
-                  const depth    = getDepth(node, nodes)
-                  const isSel    = node.id === selectedId
-                  const isDrg    = node.id === dragging.current
-                  const isDropT  = node.id === dropTargetId
-                  const isCollapsed = !!collapsed[node.id]
-                  const childCount  = nodes.filter(n => n.parent_id === node.id).length
-
-                  // Ab Tiefe 3: nur Text, kein Box
-                  if (depth >= 3) {
-                    return (
-                      <g key={node.id} style={{ opacity: isDrg ? 0.6 : 1 }}
-                        onMouseDown={e => onNodeMouseDown(e, node.id)}
-                        onDoubleClick={e => { e.stopPropagation(); openRename(node) }}
-                        onClick={() => setSelectedId(node.id)}>
-                        {isSel && (
-                          <rect x={node.x-60} y={node.y-12} width={120} height={24} rx="4"
-                            fill={color} style={{ filter:'blur(8px)', opacity:0.35 }}/>
-                        )}
-                        <text x={node.x} y={node.y+5} textAnchor="middle"
-                          fill={isSel ? color : '#475569'} fontSize="11" fontWeight={isSel ? '700' : '400'}
-                          style={{ cursor:'pointer', userSelect:'none' }}>
-                          {node.label.length > 20 ? node.label.slice(0,19)+'…' : node.label}
-                        </text>
-                      </g>
-                    )
-                  }
-
+                {/* Nodes */}
+                {nodes.map(node => {
+                  const color   = getColor(node, nodes)
+                  const isRoot  = !node.parent_id
+                  const isSel   = node.id === selectedId
+                  const isDrg   = node.id === dragging.current
+                  const isDropT = node.id === dropTargetId
+                  const num     = getOutlineNumber(node, nodes)
                   const W = isRoot ? 168 : 150, H = 50
 
                   return (
                     <g key={node.id} style={{ opacity: isDrg ? 0.65 : 1 }}>
-                      {/* Glow */}
+                      {/* Glow bei Auswahl - CSS animiert */}
                       {isSel && !isDropT && (
                         <>
+                          {/* Äußerer weicher Glow */}
                           <rect className="node-halo-outer"
                             x={node.x-W/2-16} y={node.y-H/2-16} width={W+32} height={H+32} rx="22"
-                            fill={color} stroke="none" style={{ filter:'blur(14px)' }}/>
+                            fill={color} stroke="none" style={{ filter:`blur(14px)` }}/>
+                          {/* Innerer schärferer Glow */}
                           <rect className="node-halo-inner"
                             x={node.x-W/2-8} y={node.y-H/2-8} width={W+16} height={H+16} rx="16"
-                            fill={color} stroke="none" style={{ filter:'blur(6px)' }}/>
+                            fill={color} stroke="none" style={{ filter:`blur(6px)` }}/>
                         </>
                       )}
-                      {/* Drop-Ziel */}
+                      {/* Drop-Ziel Glühen */}
                       {isDropT && (
                         <rect x={node.x-W/2-10} y={node.y-H/2-10} width={W+20} height={H+20} rx="18"
-                          fill={color+'18'} stroke={color} strokeWidth="2.5">
+                          fill={`${color}18`} stroke={color} strokeWidth="2.5">
                           <animate attributeName="strokeOpacity" values="0.4;1;0.4" dur="0.7s" repeatCount="indefinite"/>
                         </rect>
                       )}
@@ -800,25 +723,31 @@ export default function Editor() {
                         style={{ cursor:'grab' }}
                         onMouseDown={e => onNodeMouseDown(e, node.id)}
                         onDoubleClick={e => { e.stopPropagation(); openRename(node) }}
-                        onClick={() => setSelectedId(node.id)}
                       />
                       {/* Farbstreifen */}
                       <rect x={node.x-W/2} y={node.y-H/2} width={5} height={H} rx="3" fill={color}/>
-                      {/* Label - kein Outline-Nummer mehr */}
-                      <text x={node.x-W/2+14} y={node.y+6}
+                      {/* Nummer */}
+                      <text x={node.x-W/2+12} y={node.y-H/2+14}
+                        fill={color} fontSize="9" fontWeight="700"
+                        style={{ pointerEvents:'none', fontFamily:'monospace' }}>{num}</text>
+                      {/* Label */}
+                      <text x={node.x-W/2+12} y={node.y+8}
                         fill="#1e293b" fontSize={isRoot ? 13 : 12} fontWeight={isRoot ? '700' : '500'}
                         style={{ pointerEvents:'none', userSelect:'none' }}>
-                        {node.label.length > 18 ? node.label.slice(0,17)+'…' : node.label}
+                        {node.label.length > 17 ? node.label.slice(0,16)+'…' : node.label}
                       </text>
-                      {/* Collapse-Button (kleines Dreieck rechts) */}
-                      {childCount > 0 && (
-                        <g style={{ cursor:'pointer' }} onClick={e => { e.stopPropagation(); toggleCollapse(node.id) }}>
-                          <circle cx={node.x+W/2-10} cy={node.y-H/2+10} r={9} fill={color} fillOpacity="0.15"/>
-                          <text x={node.x+W/2-10} y={node.y-H/2+14}
-                            textAnchor="middle" fill={color} fontSize="9" fontWeight="700"
-                            style={{ pointerEvents:'none' }}>
-                            {isCollapsed ? '▶' : '▼'}
-                          </text>
+                      {/* + */}
+                      <g style={{ cursor:'pointer' }} onClick={e => addChild(node.id, e)}>
+                        <circle cx={node.x+W/2+16} cy={node.y} r={12} fill={color}/>
+                        <text x={node.x+W/2+16} y={node.y+1} textAnchor="middle" dominantBaseline="middle"
+                          fill="white" fontSize="18" fontWeight="700" style={{ pointerEvents:'none' }}>+</text>
+                      </g>
+                      {/* × */}
+                      {node.parent_id && (
+                        <g style={{ cursor:'pointer' }} onClick={e => deleteNode(node.id, e)}>
+                          <circle cx={node.x-W/2-16} cy={node.y} r={12} fill="#fee2e2"/>
+                          <text x={node.x-W/2-16} y={node.y+1} textAnchor="middle" dominantBaseline="middle"
+                            fill="#dc2626" fontSize="16" style={{ pointerEvents:'none' }}>×</text>
                         </g>
                       )}
                     </g>

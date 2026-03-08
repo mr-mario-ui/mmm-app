@@ -82,16 +82,14 @@ function RichTextEditor({ value, onChange, accentColor }) {
     <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden', minHeight:0 }}>
       <style>{`
         .ql-toolbar { border-radius: 8px 8px 0 0 !important; border-color: #e2e8f0 !important; background: white; padding: 4px 8px !important; flex-shrink: 0; }
-        .ql-container { border-radius: 0 0 8px 8px !important; border-color: #e2e8f0 !important; flex: 1; overflow-y: auto; font-family: inherit !important; font-size: 13px !important; }
+        .ql-container { border-radius: 0 0 8px 8px !important; border-color: #e2e8f0 !important; font-family: inherit !important; font-size: 13px !important; }
         .ql-editor { min-height: 60px; line-height: 1.7; color: #334155; padding: 10px 12px; }
         .ql-editor.ql-blank::before { color: #94a3b8; font-style: normal; }
         .ql-toolbar button:hover .ql-stroke, .ql-toolbar button.ql-active .ql-stroke { stroke: ${accentColor} !important; }
         .ql-toolbar button:hover .ql-fill, .ql-toolbar button.ql-active .ql-fill { fill: ${accentColor} !important; }
       `}</style>
-      <div style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden',
-        border: '1.5px solid #e2e8f0', borderRadius:8 }}>
-        <div ref={containerRef} style={{ flex:1, display:'flex', flexDirection:'column', overflow:'hidden' }}/>
-      </div>
+      <div ref={containerRef}
+        style={{ flex:1, border: '1.5px solid #e2e8f0', borderRadius:8, overflow:'hidden', minHeight:0 }}/>
     </div>
   )
 }
@@ -760,6 +758,8 @@ export default function Editor() {
                           <rect x={node.x-60} y={node.y-12} width={120} height={24} rx="4"
                             fill={color} style={{ filter:'blur(8px)', opacity:0.35 }}/>
                         )}
+                        {/* Weiße Fläche damit Linie unsichtbar hinter Text */}
+                        <rect x={node.x-65} y={node.y-11} width={130} height={22} rx="3" fill="white" stroke="none" style={{ pointerEvents:'none' }}/>
                         <text x={node.x} y={node.y+5} textAnchor="middle"
                           fill={isSel ? color : '#475569'} fontSize="11" fontWeight={isSel ? '700' : '400'}
                           style={{ cursor:'pointer', userSelect:'none' }}>
@@ -769,7 +769,7 @@ export default function Editor() {
                     )
                   }
 
-                  const W = isRoot ? 168 : 150, H = 50
+                  const W = isRoot ? 168 : 150, H = isRoot ? 32 : 28
 
                   return (
                     <g key={node.id} style={{ opacity: isDrg ? 0.65 : 1 }}>
@@ -791,8 +791,10 @@ export default function Editor() {
                           <animate attributeName="strokeOpacity" values="0.4;1;0.4" dur="0.7s" repeatCount="indefinite"/>
                         </rect>
                       )}
+                      {/* Weiße Fläche hinter Linie (damit Linie unsichtbar hinter Knoten) */}
+                      <rect x={node.x-W/2} y={node.y-H/2} width={W} height={H} rx="8" fill="white" stroke="none"/>
                       {/* Box */}
-                      <rect x={node.x-W/2} y={node.y-H/2} width={W} height={H} rx="11"
+                      <rect x={node.x-W/2} y={node.y-H/2} width={W} height={H} rx="8"
                         fill="white"
                         stroke={isDropT ? color : isSel ? color : '#e2e8f0'}
                         strokeWidth={isDropT ? 2.5 : isSel ? 2 : 1}
@@ -803,21 +805,21 @@ export default function Editor() {
                         onClick={() => setSelectedId(node.id)}
                       />
                       {/* Farbstreifen */}
-                      <rect x={node.x-W/2} y={node.y-H/2} width={5} height={H} rx="3" fill={color}/>
-                      {/* Label - kein Outline-Nummer mehr */}
-                      <text x={node.x-W/2+14} y={node.y+6}
+                      <rect x={node.x-W/2} y={node.y-H/2} width={5} height={H} rx="3" fill={color} style={{ pointerEvents:'none' }}/>
+                      {/* Label */}
+                      <text x={node.x-W/2+14} y={node.y+5}
                         fill="#1e293b" fontSize={isRoot ? 13 : 12} fontWeight={isRoot ? '700' : '500'}
                         style={{ pointerEvents:'none', userSelect:'none' }}>
                         {node.label.length > 18 ? node.label.slice(0,17)+'…' : node.label}
                       </text>
-                      {/* Collapse-Button (kleines Dreieck rechts) */}
+                      {/* Collapse-Button mit Anzahl */}
                       {childCount > 0 && (
                         <g style={{ cursor:'pointer' }} onClick={e => { e.stopPropagation(); toggleCollapse(node.id) }}>
-                          <circle cx={node.x+W/2-10} cy={node.y-H/2+10} r={9} fill={color} fillOpacity="0.15"/>
-                          <text x={node.x+W/2-10} y={node.y-H/2+14}
-                            textAnchor="middle" fill={color} fontSize="9" fontWeight="700"
+                          <circle cx={node.x+W/2-10} cy={node.y} r={9} fill={color} fillOpacity={isCollapsed ? 0.9 : 0.15}/>
+                          <text x={node.x+W/2-10} y={node.y+4}
+                            textAnchor="middle" fill={isCollapsed ? 'white' : color} fontSize="9" fontWeight="700"
                             style={{ pointerEvents:'none' }}>
-                            {isCollapsed ? '▶' : '▼'}
+                            {isCollapsed ? childCount : '▼'}
                           </text>
                         </g>
                       )}
