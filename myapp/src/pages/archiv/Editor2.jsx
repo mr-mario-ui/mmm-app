@@ -169,16 +169,14 @@ function getDesc(id, all) {
   return r
 }
 function getOutlineNumber(node, all) {
-  if (!node.parent_id) return ''   // Root: keine Nummer
-  const parent = all.find(n => n.id === node.parent_id)
-  if (!parent) return '?'
-  const siblings = all.filter(n => n.parent_id === node.parent_id)
-  const idx = siblings.findIndex(n => n.id === node.id)
-  if (!parent.parent_id) {
-    // Direkte Kinder des Root: 1, 2, 3 …
+  if (!node.parent_id) {
+    const idx = all.filter(n => !n.parent_id).findIndex(n => n.id === node.id)
     return `${idx + 1}`
   }
+  const parent = all.find(n => n.id === node.parent_id)
+  if (!parent) return '?'
   const parentNum = getOutlineNumber(parent, all)
+  const idx = all.filter(n => n.parent_id === node.parent_id).findIndex(n => n.id === node.id)
   return `${parentNum}.${idx + 1}`
 }
 function getOrderedNodes(all) {
@@ -195,45 +193,44 @@ function getOrderedNodes(all) {
 function autoLayout(nodes) {
   if (nodes.length === 0) return nodes
 
-  const NODE_W  = 230
+  const NODE_W = 230   // horizontaler Abstand
+  const NODE_H = 110   // vertikaler Abstand zwischen Geschwistern
   const START_X = 100
-  // Feste Zeilenhöhe: größte Box (28px) + 1/3 davon als Abstand = 37px
-  // Das gilt für ALLE Zeilen — damit überlappen sich nie zwei Knoten egal auf welcher Ebene
-  const ROW_H   = 37
 
-  function countLeaves(id) {
-    const ch = nodes.filter(n => n.parent_id === id)
-    if (ch.length === 0) return 1
-    return ch.reduce((s, c) => s + countLeaves(c.id), 0)
-  }
-
-  function getDepthOf(id) {
-    let d = 0, cur = nodes.find(n => n.id === id)
-    while (cur && cur.parent_id) { d++; cur = nodes.find(n => n.id === cur.parent_id) }
-    return d
+  // Berechne Subtree-Höhe (Anzahl Blätter)
+  function subtreeHeight(id) {
+    const children = nodes.filter(n => n.parent_id === id)
+    if (children.length === 0) return 1
+    return children.reduce((sum, c) => sum + subtreeHeight(c.id), 0)
   }
 
   const positioned = {}
 
-  function place(id, depth, rowStart) {
-    const leaves  = countLeaves(id)
-    // Mitte des zugeteilten Zeilenbereichs
+  function place(id, depth, yStart) {
+    const children = nodes.filter(n => n.parent_id === id)
+    const h = subtreeHeight(id)
+    const yCenter = yStart + (h * NODE_H) / 2
+
     positioned[id] = {
       x: START_X + depth * NODE_W,
-      y: rowStart + (leaves * ROW_H) / 2
+      y: yCenter
     }
-    let childRow = rowStart
-    nodes.filter(n => n.parent_id === id).forEach(child => {
-      const childLeaves = countLeaves(child.id)
-      place(child.id, depth + 1, childRow)
-      childRow += childLeaves * ROW_H
+
+    let childY = yStart
+    children.forEach(child => {
+      const ch = subtreeHeight(child.id)
+      place(child.id, depth + 1, childY)
+      childY += ch * NODE_H
     })
   }
 
-  let rowStart = 0
-  nodes.filter(n => !n.parent_id).forEach(root => {
-    place(root.id, 0, rowStart)
-    rowStart += countLeaves(root.id) * ROW_H + ROW_H
+  // Alle Wurzeln
+  const roots = nodes.filter(n => !n.parent_id)
+  let rootY = 60
+  roots.forEach(root => {
+    const h = subtreeHeight(root.id)
+    place(root.id, 0, rootY)
+    rootY += h * NODE_H + 80
   })
 
   return nodes.map(n => positioned[n.id]
@@ -293,52 +290,20 @@ export default function Editor() {
 
   // Undo
   const undoStack = useRef([])
-  const [collapsed, setCollapsed] = useState({})       // manuell ein/ausgeklappt per Knoten
-  const [collapsedDepth, setCollapsedDepth] = useState(null) // null=alles offen, sonst Tiefengrenze
-
-  // Ist ein Knoten eingeklappt?
-  // Priorität: manuelles collapsed[id] schlägt immer den Depth-Button
-  // collapsed[id] === true  → immer zu (auch wenn collapsedDepth null)
-  // collapsed[id] === false → immer auf (Override gegen collapsedDepth)
-  // collapsed[id] === undefined → collapsedDepth entscheidet
-  const effectiveCollapsed = (nodeId) => {
-    const manual = collapsed[nodeId]
-    if (manual === true)  return true
-    if (manual === false) return false   // explizit aufgeklappt → nie durch Depth überschreiben
-    // kein manueller Eintrag → Depth-Button entscheidet
-    if (collapsedDepth === null) return false
-    const node = nodes.find(n => n.id === nodeId)
-    if (!node) return false
-    const depth = getDepth(node, nodes)
-    const hasKids = nodes.some(n => n.parent_id === nodeId)
-    return hasKids && depth >= collapsedDepth
-  }
+  const [collapsed, setCollapsed] = useState({}) // nodeId -> true wenn zugeklappt
 
   const toggleCollapse = (nodeId) => {
-    setCollapsed(prev => {
-      // Aktuellen effektiven Zustand berechnen mit aktuellem prev
-      const manual = prev[nodeId]
-      let current
-      if (manual === true)  current = true
-      else if (manual === false) current = false
-      else if (collapsedDepth === null) current = false
-      else {
-        const node = nodes.find(n => n.id === nodeId)
-        const depth = node ? getDepth(node, nodes) : 0
-        const hasKids = nodes.some(n => n.parent_id === nodeId)
-        current = hasKids && depth >= collapsedDepth
-      }
-      return { ...prev, [nodeId]: !current }
-    })
+    setCollapsed(prev => ({ ...prev, [nodeId]: !prev[nodeId] }))
   }
   // Gibt alle sichtbaren nodes zurück (collapsed berücksichtigt)
   const getVisibleNodes = (all) => {
     const hidden = new Set()
     all.forEach(n => {
       if (!n.parent_id) return
+      // Prüfe ob ein Vorfahre collapsed ist
       let cur = n
       while (cur.parent_id) {
-        if (effectiveCollapsed(cur.parent_id)) { hidden.add(n.id); break }
+        if (collapsed[cur.parent_id]) { hidden.add(n.id); break }
         cur = all.find(x => x.id === cur.parent_id) || {}
       }
     })
@@ -347,19 +312,6 @@ export default function Editor() {
   const pushUndo  = useCallback((snap) => {
     undoStack.current = [...undoStack.current.slice(-MAX_UNDO + 1), JSON.parse(JSON.stringify(snap))]
   }, [])
-
-  // Multi-Select
-  const [selectedIds, setSelectedIds]   = useState(new Set())
-  const selectedIdsRef                  = useRef(new Set())
-  const [selRect, setSelRect]           = useState(null)
-  const selRectStart                    = useRef(null)
-  const isSelecting                     = useRef(false)
-
-  const setSelectedIdsSync = (val) => {
-    const next = typeof val === 'function' ? val(selectedIdsRef.current) : val
-    selectedIdsRef.current = next
-    setSelectedIds(next)
-  }
 
   // Canvas drag
   const dragging  = useRef(null)
@@ -390,8 +342,7 @@ export default function Editor() {
   const resizeListX       = useRef(0)
   const resizeListW       = useRef(0)
 
-  const commentTimer   = useRef(null)
-  const selectedIdRef  = useRef(null)
+  const commentTimer = useRef(null)
 
   // ── Strg+Z ───────────────────────────────────────────────
   useEffect(() => {
@@ -603,13 +554,12 @@ export default function Editor() {
   // ── Kommentar ─────────────────────────────────────────────
   const handleCommentChange = (val) => {
     setComment(val)
-    const curId = selectedIdRef.current
-    if (!curId) return
+    if (!selectedId) return
     clearTimeout(commentTimer.current)
     commentTimer.current = setTimeout(async () => {
-      setNodes(prev => prev.map(n => n.id === curId ? { ...n, comment: val } : n))
+      setNodes(prev => prev.map(n => n.id === selectedId ? { ...n, comment: val } : n))
       setSaved(false)
-      await supabase.from('nodes').update({ comment: val }).eq('id', curId)
+      await supabase.from('nodes').update({ comment: val }).eq('id', selectedId)
       setSaved(true)
     }, 800)
   }
@@ -617,24 +567,11 @@ export default function Editor() {
   // ── Canvas drag ───────────────────────────────────────────
   const onNodeMouseDown = (e, id) => {
     e.stopPropagation()
-    if (e.ctrlKey || e.metaKey) {
-      setSelectedIdsSync(prev => {
-        const next = new Set(prev)
-        if (next.has(id)) next.delete(id)
-        else next.add(id)
-        return next
-      })
-      setSelectedId(id)
-      return
-    }
-    const inMulti = selectedIdsRef.current.has(id) && selectedIdsRef.current.size > 1
-    if (!inMulti) {
-      setSelectedIdsSync(new Set([id]))
-      setSelectedId(id)
-    }
+    setSelectedId(id)
     const node = nodes.find(n => n.id === id)
     dragging.current = id
     didDrag.current  = false
+    // Offset in SVG-Koordinaten (pan + zoom korrigiert)
     dragOff.current  = {
       x: (e.clientX - panRef.current.x) / zoomRef.current - node.x,
       y: (e.clientY - panRef.current.y) / zoomRef.current - node.y
@@ -642,55 +579,25 @@ export default function Editor() {
   }
   const onSvgDown = (e) => {
     if (e.target === svgRef.current || e.target.tagName === 'svg') {
-      if (!e.ctrlKey && !e.metaKey) {
-        isSelecting.current = true
-        selRectStart.current = { x: e.clientX, y: e.clientY }
-        setSelRect({ x1: e.clientX, y1: e.clientY, x2: e.clientX, y2: e.clientY })
-        setSelectedId(null)
-        setSelectedIdsSync(new Set())
-      }
       isPanning.current = true
       panStart.current  = { x: e.clientX - panRef.current.x, y: e.clientY - panRef.current.y }
+      setSelectedId(null)
     }
   }
   const onMove = useCallback((e) => {
     if (dragging.current) {
       didDrag.current = true
-      const dx = (e.clientX - panRef.current.x) / zoomRef.current - dragOff.current.x
-      const dy = (e.clientY - panRef.current.y) / zoomRef.current - dragOff.current.y
-      const moveIds = selectedIdsRef.current.size > 1 ? selectedIdsRef.current : new Set([dragging.current])
-      setNodes(prev => {
-        const draggedNode = prev.find(n => n.id === dragging.current)
-        if (!draggedNode) return prev
-        const ddx = dx - draggedNode.x, ddy = dy - draggedNode.y
-        return prev.map(n => moveIds.has(n.id) ? { ...n, x: n.x + ddx, y: n.y + ddy } : n)
-      })
+      const nx = (e.clientX - panRef.current.x) / zoomRef.current - dragOff.current.x
+      const ny = (e.clientY - panRef.current.y) / zoomRef.current - dragOff.current.y
+      setNodes(prev => prev.map(n => n.id === dragging.current ? { ...n, x: nx, y: ny } : n))
       setDragGhost({ x: e.clientX, y: e.clientY })
-      if (selectedIdsRef.current.size <= 1) {
-        const nx = dx, ny = dy
-        const W_BOX = 150, H_BOX = 50
-        const others = nodes.filter(n => n.id !== dragging.current && !getDesc(dragging.current, nodes).slice(1).includes(n.id))
-        let hit = null
-        others.forEach(n => {
-          if (nx > n.x - W_BOX/2 && nx < n.x + W_BOX/2 && ny > n.y - H_BOX/2 && ny < n.y + H_BOX/2) hit = n.id
-        })
-        setDropTargetId(hit)
-      }
-    } else if (isSelecting.current) {
-      setSelRect({ x1: selRectStart.current.x, y1: selRectStart.current.y, x2: e.clientX, y2: e.clientY })
-      const rect = svgRef.current?.getBoundingClientRect()
-      if (!rect) return
-      const toSvg = (cx, cy) => ({
-        x: (cx - rect.left - panRef.current.x) / zoomRef.current,
-        y: (cy - rect.top  - panRef.current.y) / zoomRef.current
+      const W_BOX = 150, H_BOX = 50
+      const others = nodes.filter(n => n.id !== dragging.current && !getDesc(dragging.current, nodes).slice(1).includes(n.id))
+      let hit = null
+      others.forEach(n => {
+        if (nx > n.x - W_BOX/2 && nx < n.x + W_BOX/2 && ny > n.y - H_BOX/2 && ny < n.y + H_BOX/2) hit = n.id
       })
-      const a = toSvg(selRectStart.current.x, selRectStart.current.y)
-      const b = toSvg(e.clientX, e.clientY)
-      const minX = Math.min(a.x, b.x), maxX = Math.max(a.x, b.x)
-      const minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y)
-      const inside = new Set(nodes.filter(n => n.x >= minX && n.x <= maxX && n.y >= minY && n.y <= maxY).map(n => n.id))
-      setSelectedIdsSync(inside)
-      if (inside.size === 1) setSelectedId([...inside][0])
+      setDropTargetId(hit)
     } else if (isPanning.current) {
       const np = { x: e.clientX - panStart.current.x, y: e.clientY - panStart.current.y }
       setPanSync(np)
@@ -700,17 +607,18 @@ export default function Editor() {
   const onUp = useCallback(async () => {
     if (dragging.current) {
       const draggedId = dragging.current
+      const node = nodes.find(n => n.id === draggedId)
       if (didDrag.current) {
         pushUndo(nodes)
-        const moveIds = selectedIdsRef.current.size > 1 ? selectedIdsRef.current : new Set([draggedId])
-        if (dropTargetId && moveIds.size === 1) {
+        if (dropTargetId) {
+          // Reparent + neu layouten
           const next = nodes.map(n => n.id === draggedId ? { ...n, parent_id: dropTargetId } : n)
           await supabase.from('nodes').update({ parent_id: dropTargetId }).eq('id', draggedId)
           await applyAutoLayout(next)
         } else {
+          // Nur Position speichern
           setSaved(false)
-          const moved = nodes.filter(n => moveIds.has(n.id))
-          await Promise.all(moved.map(n => supabase.from('nodes').update({ x: n.x, y: n.y }).eq('id', n.id)))
+          await supabase.from('nodes').update({ x: node.x, y: node.y }).eq('id', draggedId)
           setSaved(true)
         }
       }
@@ -718,10 +626,6 @@ export default function Editor() {
       didDrag.current  = false
       setDropTargetId(null)
       setDragGhost(null)
-    }
-    if (isSelecting.current) {
-      isSelecting.current = false
-      setSelRect(null)
     }
     isPanning.current = false
   }, [nodes, dropTargetId, pushUndo])
@@ -742,7 +646,6 @@ export default function Editor() {
   }
 
   const selectedNode  = nodes.find(n => n.id === selectedId)
-  selectedIdRef.current = selectedId
   const orderedNodes  = getOrderedNodes(nodes)
   const visibleNodes  = getVisibleNodes(nodes)
   const canUndo       = undoStack.current.length > 0
@@ -967,8 +870,8 @@ export default function Editor() {
               <ToolBtn icon="＋" label={isMobile ? '' : 'Unterpunkt'} onClick={() => addChild(selectedNode.id)} color="#16a34a"/>
               {hasChildren(selectedNode.id) && (
                 <ToolBtn
-                  icon={effectiveCollapsed(selectedNode.id) ? '▶' : '▼'}
-                  label={isMobile ? '' : (effectiveCollapsed(selectedNode.id) ? 'Aufklappen' : 'Zuklappen')}
+                  icon={collapsed[selectedNode.id] ? '▶' : '▼'}
+                  label={isMobile ? '' : (collapsed[selectedNode.id] ? 'Aufklappen' : 'Zuklappen')}
                   onClick={() => toggleCollapse(selectedNode.id)}
                   color="#7c3aed"/>
               )}
@@ -1049,21 +952,6 @@ export default function Editor() {
                   .node-halo-inner { animation: nodeGlowInner 1.8s ease-in-out infinite; }
                 `}</style>
               </defs>
-
-              {/* Auswahlrahmen (screen-Koordinaten, außerhalb der g-Transformation) */}
-              {selRect && (() => {
-                const x = Math.min(selRect.x1, selRect.x2)
-                const y = Math.min(selRect.y1, selRect.y2)
-                const svgRect = svgRef.current?.getBoundingClientRect() || { left:0, top:0 }
-                return (
-                  <rect
-                    x={x - svgRect.left} y={y - svgRect.top}
-                    width={Math.abs(selRect.x2 - selRect.x1)} height={Math.abs(selRect.y2 - selRect.y1)}
-                    fill="rgba(37,99,235,0.06)" stroke="#2563eb" strokeWidth="1.5"
-                    strokeDasharray="5 3" style={{ pointerEvents:'none' }}/>
-                )
-              })()}
-
               <g transform={`translate(${pan.x},${pan.y}) scale(${zoom})`}>
                 {/* Linien - nur für sichtbare nodes */}
                 {visibleNodes.map(node => {
@@ -1090,10 +978,9 @@ export default function Editor() {
                   const isRoot   = !node.parent_id
                   const depth    = getDepth(node, nodes)
                   const isSel    = node.id === selectedId
-                  const isMultiSel = selectedIds.has(node.id) && selectedIds.size > 1
                   const isDrg    = node.id === dragging.current
                   const isDropT  = node.id === dropTargetId
-                  const isCollapsed = effectiveCollapsed(node.id)
+                  const isCollapsed = !!collapsed[node.id]
                   const childCount  = nodes.filter(n => n.parent_id === node.id).length
 
                   // Ab Tiefe 3: nur Text, kein Box
@@ -1104,14 +991,14 @@ export default function Editor() {
                         onDoubleClick={e => { e.stopPropagation(); openRename(node) }}
                         onTouchEnd={e => { e.stopPropagation(); setSelectedId(node.id) }}
                         onClick={() => setSelectedId(node.id)}>
-                        {(isSel || isMultiSel) && (
+                        {isSel && (
                           <rect x={node.x-60} y={node.y-12} width={120} height={24} rx="4"
-                            fill={isMultiSel ? '#2563eb' : color} style={{ filter:'blur(8px)', opacity:0.35 }}/>
+                            fill={color} style={{ filter:'blur(8px)', opacity:0.35 }}/>
                         )}
                         {/* Weiße Fläche damit Linie unsichtbar hinter Text */}
                         <rect x={node.x-65} y={node.y-11} width={130} height={22} rx="3" fill="white" stroke="none" style={{ pointerEvents:'none' }}/>
                         <text x={node.x} y={node.y+5} textAnchor="middle"
-                          fill={isSel || isMultiSel ? color : '#475569'} fontSize="11" fontWeight={isSel || isMultiSel ? '700' : '400'}
+                          fill={isSel ? color : '#475569'} fontSize="11" fontWeight={isSel ? '700' : '400'}
                           style={{ cursor:'pointer', userSelect:'none' }}>
                           {node.label.length > 20 ? node.label.slice(0,19)+'…' : node.label}
                         </text>
@@ -1124,14 +1011,14 @@ export default function Editor() {
                   return (
                     <g key={node.id} style={{ opacity: isDrg ? 0.65 : 1 }}>
                       {/* Glow */}
-                      {(isSel || isMultiSel) && !isDropT && (
+                      {isSel && !isDropT && (
                         <>
                           <rect className="node-halo-outer"
                             x={node.x-W/2-16} y={node.y-H/2-16} width={W+32} height={H+32} rx="22"
-                            fill={isMultiSel ? '#2563eb' : color} stroke="none" style={{ filter:'blur(14px)' }}/>
+                            fill={color} stroke="none" style={{ filter:'blur(14px)' }}/>
                           <rect className="node-halo-inner"
                             x={node.x-W/2-8} y={node.y-H/2-8} width={W+16} height={H+16} rx="16"
-                            fill={isMultiSel ? '#2563eb' : color} stroke="none" style={{ filter:'blur(6px)' }}/>
+                            fill={color} stroke="none" style={{ filter:'blur(6px)' }}/>
                         </>
                       )}
                       {/* Drop-Ziel */}
@@ -1146,8 +1033,8 @@ export default function Editor() {
                       {/* Box */}
                       <rect x={node.x-W/2} y={node.y-H/2} width={W} height={H} rx="8"
                         fill="white"
-                        stroke={isDropT ? color : (isSel || isMultiSel) ? color : '#e2e8f0'}
-                        strokeWidth={isDropT ? 2.5 : (isSel || isMultiSel) ? 2 : 1}
+                        stroke={isDropT ? color : isSel ? color : '#e2e8f0'}
+                        strokeWidth={isDropT ? 2.5 : isSel ? 2 : 1}
                         filter={isDrg ? 'url(#shd)' : 'url(#sh)'}
                         style={{ cursor:'grab' }}
                         onMouseDown={e => onNodeMouseDown(e, node.id)}
@@ -1227,38 +1114,6 @@ export default function Editor() {
 
             {/* Gliederungsliste */}
             <div style={{ flex:1, overflowY:'auto', padding:'12px 12px 0' }}>
-
-              {/* ── Ebenen einklappen ── */}
-              {(() => {
-                const maxDepth = Math.max(...nodes.map(n => getDepth(n, nodes)), 0)
-                if (maxDepth === 0) return null
-                // collapsedDepth: null=alles offen, 0=nur Root sichtbar, 1=Ebene1 sichtbar, …
-                // Klick: null→0→1→…→maxDepth-1→null
-                const next = collapsedDepth === null ? 0
-                           : collapsedDepth >= maxDepth - 1 ? null
-                           : collapsedDepth + 1
-                const label = collapsedDepth === null ? 'Alle offen' : `Bis Ebene ${collapsedDepth}`
-                return (
-                  <div style={{ display:'flex', alignItems:'center', gap:6, marginBottom:8, paddingLeft:4 }}>
-                    <button onClick={() => { setCollapsedDepth(next); setCollapsed({}) }}
-                      style={{ display:'flex', alignItems:'center', gap:5, padding:'4px 10px',
-                        borderRadius:20, border:'1.5px solid #e2e8f0', cursor:'pointer', fontSize:11, fontWeight:600,
-                        background: collapsedDepth !== null ? '#1e293b' : 'white',
-                        color: collapsedDepth !== null ? 'white' : '#64748b',
-                        transition:'all 0.15s' }}>
-                      {/* Farbige Punkte — aktive Ebenen leuchten, eingeklappte grau */}
-                      {Array.from({ length: maxDepth + 1 }, (_, i) => (
-                        <span key={i} style={{ width:7, height:7, borderRadius:'50%', flexShrink:0,
-                          background: (collapsedDepth === null || i <= collapsedDepth)
-                            ? DEPTH_COLORS[i % DEPTH_COLORS.length] : '#cbd5e1',
-                          transition:'background 0.15s' }}/>
-                      ))}
-                      {label}
-                    </button>
-                  </div>
-                )
-              })()}
-
               <div style={{ fontSize:10, fontWeight:700, color:'#94a3b8', letterSpacing:1,
                 marginBottom:10, textTransform:'uppercase', paddingLeft:4 }}>Gliederung</div>
               {orderedNodes.map(node => {
@@ -1267,14 +1122,14 @@ export default function Editor() {
                 const num    = getOutlineNumber(node, nodes)
                 const isSel  = node.id === selectedId
                 const isOver = node.id === listDragOver
-                const isColl = effectiveCollapsed(node.id)
+                const isColl = !!collapsed[node.id]
                 const hasKids = nodes.some(n => n.parent_id === node.id)
 
-                // Versteckt wenn ein Vorfahre eingeklappt ist (collapsed oder collapsedDepth)
+                // Versteckt wenn ein Vorfahre in der Liste eingeklappt ist
                 const isHidden = (() => {
                   let cur = nodes.find(n => n.id === node.parent_id)
                   while (cur) {
-                    if (effectiveCollapsed(cur.id)) return true
+                    if (collapsed[cur.id]) return true
                     cur = nodes.find(n => n.id === cur.parent_id)
                   }
                   return false
@@ -1290,8 +1145,8 @@ export default function Editor() {
                     onDragLeave={() => setListDragOver(null)}
                     onClick={() => setSelectedId(node.id)}
                     onDoubleClick={() => openRename(node)}
-                    style={{ display:'flex', alignItems:'center', gap:5, padding:'3px 6px',
-                      marginLeft: depth * 14, marginBottom:1, borderRadius:5,
+                    style={{ display:'flex', alignItems:'center', gap:6, padding:'7px 8px',
+                      marginLeft: depth * 16, marginBottom:2, borderRadius:7,
                       background: isOver ? `${color}15` : isSel ? `${color}10` : 'transparent',
                       border: isOver ? `1.5px solid ${color}60`
                             : isSel ? `1.5px solid ${color}30` : '1.5px solid transparent',
@@ -1300,7 +1155,7 @@ export default function Editor() {
                     <span style={{ color:'#cbd5e1', fontSize:13, userSelect:'none', flexShrink:0 }}>⠿</span>
                     <span style={{ width:7, height:7, borderRadius:'50%', background:color, flexShrink:0 }}/>
                     <span style={{ fontSize:10, fontWeight:700, color, fontFamily:'monospace', minWidth:28, flexShrink:0 }}>{num}</span>
-                    <span style={{ flex:1, fontSize:12, color:'#1e293b',
+                    <span style={{ flex:1, fontSize:13, color:'#1e293b',
                       fontWeight: depth===0 ? 600 : 400,
                       whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
                       {node.label}
